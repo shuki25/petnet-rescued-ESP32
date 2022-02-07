@@ -108,7 +108,7 @@ void app_main(void) {
     red_led.delay = 700;
     red_led.state = 0;
     green_led.io_num = GREEN_LED;
-    green_led.delay = 150;
+    green_led.delay = 350;
     green_led.state = 0;
 
     // xTaskCreate(blinky_task, "blink_task", 1024, &blue_led, 10, NULL);
