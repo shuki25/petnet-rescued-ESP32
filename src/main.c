@@ -3,23 +3,22 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "driver/gpio.h"
+#include "esp_system.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+
 #include "config.h"
 #include "sdkconfig.h"
+#include "wifi_provision.h"
+#include "main.h"
 
-typedef struct {
-    uint32_t io_num;
-    uint8_t state;
-    uint16_t delay;
-} led_config_t;
-
-typedef struct {
-    uint8_t state;
-    uint32_t counter;
-} input_state_t;
+#define MAIN_TAG    "main_app"
 
 static xQueueHandle gpio_evt_queue = NULL;
 static input_state_t hopper_state;
 static input_state_t button_state;
+static wifi_info_t wifi_info;
 
 static void IRAM_ATTR gpio_isr_handler(void *arg) {
     uint32_t gpio_num = (uint32_t) arg;
@@ -65,8 +64,28 @@ static void blinky_task(void *data) {
     }
 }
 
-void app_main(void) {
+static void wifi_led(void *data) {
+    led_config_t led = *(led_config_t *) data;
+    uint16_t loop_delay = led.delay;
 
+    while(true) {
+        if(wifi_info.state == 0) {
+            led.state = 1;
+            for(int i=0; i<4; i++, led.state = !led.state) {
+                gpio_set_level(led.io_num, led.state);
+                vTaskDelay((loop_delay/4) / portTICK_PERIOD_MS);
+            }
+            gpio_set_level(led.io_num, 0);
+            vTaskDelay((loop_delay) / portTICK_PERIOD_MS);
+        }
+        else {
+            gpio_set_level(led.io_num, led.state);
+            vTaskDelay(loop_delay / portTICK_PERIOD_MS);
+        }
+    }
+}
+
+void app_main(void) {
     // Initialize GPIO output config
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_DISABLE;
@@ -88,6 +107,46 @@ void app_main(void) {
     io_conf.pin_bit_mask = GPIO_BUTTON_SEL;
     gpio_config(&io_conf);
 
+    // Set up LEDs
+    led_config_t blue_led, red_led, green_led;
+    blue_led.io_num = ONBOARD_LED;
+    blue_led.delay = 1000;
+    blue_led.state = 0;
+    red_led.io_num = RED_LED;
+    red_led.delay = 700;
+    red_led.state = 0;
+    green_led.io_num = GREEN_LED;
+    green_led.delay = 350;
+    green_led.state = 0;
+
+    wifi_info.state = false;
+
+    // Delay to allow boot up stabliziation
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    // Initialize NVS
+    printf("Initializing NVS\n");
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
+    
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+
+    xTaskCreate(wifi_led, "wifi_status_led", 1024, &blue_led, 10, NULL);
+    list_AP();
+    
+    ESP_LOGI(MAIN_TAG, "Connecting to WiFi -- SSID: %s", WIFI_SSID);
+    esp_err_t err = wifi_connect(&wifi_info, WIFI_SSID, WIFI_PASS);
+    
+    if(err == ESP_OK) {
+        char mac_addr[18];
+        bssid2mac(mac_addr, wifi_info.bssid);
+        ESP_LOGI(MAIN_TAG, "WiFi Connected. MAC ID: %s", mac_addr);
+    }
+
     // Create a queue to handle isr event
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     xTaskCreate(gpio_task_handler, "gpio_task_handler", 2048, NULL, 10, NULL);
@@ -99,23 +158,10 @@ void app_main(void) {
 
     printf("Minimum free heap size: %d bytes\n", esp_get_free_heap_size());
 
-    // Set up LEDs
-    led_config_t blue_led, red_led, green_led;
-    blue_led.io_num = ONBOARD_LED;
-    blue_led.delay = 500;
-    blue_led.state = 0;
-    red_led.io_num = RED_LED;
-    red_led.delay = 700;
-    red_led.state = 0;
-    green_led.io_num = GREEN_LED;
-    green_led.delay = 350;
-    green_led.state = 0;
-
-    // xTaskCreate(blinky_task, "blink_task", 1024, &blue_led, 10, NULL);
     xTaskCreate(blinky_task, "blink_task", 1024, &green_led, 10, NULL);
     xTaskCreate(blinky_task, "blink_task", 1024, &red_led, 10, NULL);
     
-     printf("Minimum free heap size: %d bytes\n", esp_get_free_heap_size());
+    printf("Minimum free heap size: %d bytes\n", esp_get_free_heap_size());
 
     while(true) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
