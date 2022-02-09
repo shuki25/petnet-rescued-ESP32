@@ -55,16 +55,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 
 
 void list_AP() {
-    ESP_LOGI(SCAN_TAG, "Initalizing WiFi");
-    ESP_ERROR_CHECK(esp_netif_init());
-    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
-    assert(sta_netif);
-
-    wifi_init_config_t wifi_config = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    wifi_status = ESP_OK;
+    ESP_LOGI(SCAN_TAG, "Scanning for AP");
 
     uint16_t max_size = MAX_APs;
     wifi_ap_record_t ap_list[MAX_APs];
@@ -78,7 +69,6 @@ void list_AP() {
         .show_hidden = true
     };
 
-    
     esp_wifi_scan_start(&scan_config, true);
     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&max_size, ap_list));
@@ -101,9 +91,13 @@ void bssid2mac(char *mac_addr, uint8_t *bssid) {
 esp_err_t wifi_connect(wifi_info_t *wifi_info, char *ssid, char *password) {
 
     s_wifi_event_group = xEventGroupCreate();
+    
+    ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    assert(sta_netif);
+    
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT(); 
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     esp_event_handler_instance_t instance_any_id;
@@ -112,12 +106,16 @@ esp_err_t wifi_connect(wifi_info_t *wifi_info, char *ssid, char *password) {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, &instance_any_id));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &instance_got_ip));
 
-    wifi_config_t wifi_config;
-    memcpy(wifi_config.sta.ssid, ssid, strlen(ssid)+1);
-    memcpy(wifi_config.sta.password, password, strlen(password)+1);
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    wifi_config.sta.pmf_cfg.capable = true;
-    wifi_config.sta.pmf_cfg.required = false;
+    // wifi_config_t wifi_config;
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = "",
+            .password = ""
+        }
+    };
+    strcpy((char *)wifi_config.sta.ssid, ssid);
+    strcpy((char *)wifi_config.sta.password, password);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
@@ -138,14 +136,16 @@ esp_err_t wifi_connect(wifi_info_t *wifi_info, char *ssid, char *password) {
      * happened. */
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(SCAN_TAG, "connected to ap SSID:%s password:%s", ssid, password);
-        memcpy(wifi_info->bssid, wifi_config.sta.bssid, sizeof(wifi_config.sta.bssid));
+        esp_netif_get_ip_info(sta_netif, &wifi_info->netif_info);
+        esp_wifi_sta_get_ap_info(&wifi_info->ap_info);
+        esp_netif_get_mac(sta_netif, wifi_info->mac);
         wifi_info->state = true;
         // wifi_info->bssid = wifi_config.bssid;
         // wifi_info->ssid = wifi_config.;
         // wifi_info->primary = wifi_config.primary ;
         // wifi_info->rssi = wifi_config.rssi;
     } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(SCAN_TAG, "Failed to connect to SSID:%s, password:%s", ssid, password);
+        ESP_LOGI(SCAN_TAG, "Failed to connect to SSID:%s, password:%s", wifi_config.sta.ssid, wifi_config.sta.password);
         wifi_info->state = false;
     } else {
         ESP_LOGE(SCAN_TAG, "UNEXPECTED EVENT");

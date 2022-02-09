@@ -136,17 +136,19 @@ void app_main(void) {
     vTaskDelay(200 / portTICK_PERIOD_MS);
 
     xTaskCreate(wifi_led, "wifi_status_led", 1024, &blue_led, 10, NULL);
-    list_AP();
     
     ESP_LOGI(MAIN_TAG, "Connecting to WiFi -- SSID: %s", WIFI_SSID);
     esp_err_t err = wifi_connect(&wifi_info, WIFI_SSID, WIFI_PASS);
     
     if(err == ESP_OK) {
-        char mac_addr[18];
-        bssid2mac(mac_addr, wifi_info.bssid);
-        ESP_LOGI(MAIN_TAG, "WiFi Connected. MAC ID: %s", mac_addr);
+        // char mac_addr[18];
+        // bssid2mac(mac_addr, wifi_info.ap_info.bssid);
+        ESP_LOGI(MAIN_TAG, "WiFi Connected. AP MAC ID:" MACSTR "\n", MAC2STR(wifi_info.ap_info.bssid));
+        ESP_LOGI(MAIN_TAG, "Station IP:" IPSTR " MAC ID:" MACSTR "\n", IP2STR(&wifi_info.netif_info.ip), MAC2STR(wifi_info.mac));
     }
-
+    
+    list_AP(); 
+    
     // Create a queue to handle isr event
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     xTaskCreate(gpio_task_handler, "gpio_task_handler", 2048, NULL, 10, NULL);
