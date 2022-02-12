@@ -40,43 +40,27 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
              *  However, event handler can also be used in case chunked encoding is used.
              */
             if (!esp_http_client_is_chunked_response(evt->client)) {
-                // If user_data buffer is configured, copy the response into the buffer
-                // if (evt->user_data) {
-                //     if (evt->user_data == NULL) {
-                //         evt->user_data = (char *) malloc(esp_http_client_get_content_length(evt->client));
-                //         output_len = 0;
-                //         if (evt->user_data == NULL) {
-                //             ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
-                //             return ESP_FAIL;
-                //         }
-                //     }
-                //     memcpy(evt->user_data + output_len, evt->data, evt->data_len);
-                // } else {
+                if (output_buffer == NULL) {
+                    output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client)+1);
+                    output_len = 0;
                     if (output_buffer == NULL) {
-                        output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client));
-                        output_len = 0;
-                        if (output_buffer == NULL) {
-                            ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
-                            return ESP_FAIL;
-                        }
+                        ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
+                        return ESP_FAIL;
                     }
-                    memcpy(output_buffer + output_len, evt->data, evt->data_len);
-                // }
+                }
+                memcpy(output_buffer + output_len, evt->data, evt->data_len);
                 output_len += evt->data_len;
             }
-
             break;
         case HTTP_EVENT_ON_FINISH:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
             if (output_buffer != NULL) {
                 int content_length = esp_http_client_get_content_length(evt->client);
                 output_buffer[content_length] = '\0';
-                ESP_LOGI(TAG, "output_buffer address: 0x%x", (unsigned int)data);
-                ESP_LOGI(TAG, "output_buffer: %s", output_buffer);
                 *data = output_buffer;
-                ESP_LOGI(TAG, "user_data address: 0x%x", (unsigned int)data);
+                ESP_LOGI(TAG, "user_data address: 0x%x", (unsigned int)*data);
                 ESP_LOGI(TAG, "user_data: %s", (char *)*data);
-                // output_buffer = NULL;
+                output_buffer = NULL;
             }
             output_len = 0;
             break;
@@ -130,11 +114,10 @@ void api_get(char **content, char *auth_token, char *endpoint) {
 
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "HTTP STATUS CODE: %d", esp_http_client_get_status_code(client));
-        ESP_LOGI(TAG, "client_config.user_data address: 0x%x", (unsigned int)client_config.user_data);
-        ESP_LOGI(TAG, "content: %s", (char *)client_config.user_data);
-        *content = (char *)*client_config.user_data;
+        *content = data;
         ESP_LOGI(TAG, "[after] content address: 0x%x", (unsigned int)*content);
-        ESP_LOGI(TAG, "content: %s", (char *)*content);
+        ESP_LOGI(TAG, "*content:");
+        ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_INFO);
         
     } else {
         ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
