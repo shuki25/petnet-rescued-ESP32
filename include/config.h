@@ -15,6 +15,8 @@
 #define WIFI_SSID       "hiccup"
 #define WIFI_PASS       "dragonrider2014"
 #define WIFI_MAX_RETRY  5
+#define API_KEY         "63b31b00a770ac4fc22154fdc8eb4875958607fe"
+#define API_BASE_URL    "http://192.168.2.118:8333/api"
 
 #ifndef WIFI_SSID
 #define WIFI_SSID       CONFIG_ESP_WIFI_SSID

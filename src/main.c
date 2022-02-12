@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -11,14 +12,16 @@
 #include "config.h"
 #include "sdkconfig.h"
 #include "wifi_provision.h"
+#include "api_client.h"
 #include "main.h"
 
-#define MAIN_TAG    "main_app"
+#define TAG    "main_app"
 
 static xQueueHandle gpio_evt_queue = NULL;
 static input_state_t hopper_state;
 static input_state_t button_state;
 static wifi_info_t wifi_info;
+static bool is_24h = true;
 
 static void IRAM_ATTR gpio_isr_handler(void *arg) {
     uint32_t gpio_num = (uint32_t) arg;
@@ -52,6 +55,17 @@ static void gpio_task_handler(void *arg) {
             // }
         }
     }
+}
+
+static void initialize() {
+    char *content;
+    // content = (char *)malloc(MAX_HTTP_OUTPUT_BUFFER);
+    // memset(content, 0, MAX_HTTP_OUTPUT_BUFFER);
+    // Get settings
+    api_get(&content, API_KEY, "/feeding-time/");
+    ESP_LOGI(TAG, "Back in initialize()");
+    ESP_LOGI(TAG, "Content: %s", content);
+    // ESP_LOG_BUFFER_HEX(TAG, content, strlen(content));
 }
 
 static void blinky_task(void *data) {
@@ -137,17 +151,18 @@ void app_main(void) {
 
     xTaskCreate(wifi_led, "wifi_status_led", 1024, &blue_led, 10, NULL);
     
-    ESP_LOGI(MAIN_TAG, "Connecting to WiFi -- SSID: %s", WIFI_SSID);
+    ESP_LOGI(TAG, "Connecting to WiFi -- SSID: %s", WIFI_SSID);
     esp_err_t err = wifi_connect(&wifi_info, WIFI_SSID, WIFI_PASS);
     
     if(err == ESP_OK) {
         // char mac_addr[18];
         // bssid2mac(mac_addr, wifi_info.ap_info.bssid);
-        ESP_LOGI(MAIN_TAG, "WiFi Connected. AP MAC ID:" MACSTR "\n", MAC2STR(wifi_info.ap_info.bssid));
-        ESP_LOGI(MAIN_TAG, "Station IP:" IPSTR " MAC ID:" MACSTR "\n", IP2STR(&wifi_info.netif_info.ip), MAC2STR(wifi_info.mac));
+        ESP_LOGI(TAG, "WiFi Connected. AP MAC ID:" MACSTR "\n", MAC2STR(wifi_info.ap_info.bssid));
+        ESP_LOGI(TAG, "Station IP:" IPSTR " MAC ID:" MACSTR "\n", IP2STR(&wifi_info.netif_info.ip), MAC2STR(wifi_info.mac));
     }
     
-    list_AP(); 
+    list_AP();
+    initialize();
     
     // Create a queue to handle isr event
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
