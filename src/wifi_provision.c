@@ -13,7 +13,7 @@
 #include "sdkconfig.h"
 #include "config.h"
 
-#define MAX_APs 20
+#define MAX_APs 10
 #define SCAN_TAG "wifi provision"
 
 static uint16_t s_retry_num = 0;
@@ -68,7 +68,7 @@ void list_AP() {
         .channel = 0, 
         .show_hidden = true
     };
-
+    ESP_LOGI(SCAN_TAG, "Starting to scan");
     esp_wifi_scan_start(&scan_config, true);
     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&max_size, ap_list));
