@@ -12,11 +12,16 @@
 #define GPIO_BUTTON_SEL         ((1ULL<<BUTTON))
 #define ESP_INTR_FLAG_DEFAULT   0
 
+#define UART_RX_PIN     22
+#define UART_TX_PIN     23
+#define RX_BUFFER_SIZE  1024
+#define TX_BUFFER_SIZE  1024
+
 #define WIFI_SSID       "hiccup"
 #define WIFI_PASS       "dragonrider2014"
 #define WIFI_MAX_RETRY  5
 #define API_KEY         "63b31b00a770ac4fc22154fdc8eb4875958607fe"
-#define API_BASE_URL    "http://192.168.2.118:8333/api"
+#define API_BASE_URL    "http://192.168.2.118:8111/api"
 
 #ifndef WIFI_SSID
 #define WIFI_SSID       CONFIG_ESP_WIFI_SSID
