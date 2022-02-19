@@ -198,6 +198,7 @@ nextion_err_t set_value(uart_port_t uart_port, char *key, nextion_payload_t *pay
     char incoming_msg[RX_BUFFER_SIZE];
     uart_event_t uart_event;
     char *prepared_command = NULL;
+    uint8_t num_digits=0;
 
     // Preparing Nextion set value payload
 
@@ -207,8 +208,18 @@ nextion_err_t set_value(uart_port_t uart_port, char *key, nextion_payload_t *pay
         sprintf(prepared_command, "%s=\"%s\"%s", key, payload->string, EOL);
     }
     else {
-        prepared_command = malloc(strlen(key) + log10(payload->number) + 7);
-        sprintf(prepared_command, "%s=%d%s", key, payload->number, EOL);
+        if(payload->number > 0) {
+            num_digits = log10(payload->number);
+        } else {
+            num_digits = 1;
+        }
+        prepared_command = malloc(strlen(key) + num_digits + 7);
+        if(prepared_command != NULL) {
+            sprintf(prepared_command, "%s=%d%s", key, payload->number, EOL);
+        } else {
+            ESP_LOGE(TAG, "malloc failed.");
+        }
+        
     }    
     
     esp_err_t status = NEXTION_FAIL;
