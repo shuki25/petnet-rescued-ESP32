@@ -115,9 +115,9 @@ void api_get(char **content, char *auth_token, char *endpoint) {
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "HTTP STATUS CODE: %d", esp_http_client_get_status_code(client));
         *content = data;
-        ESP_LOGI(TAG, "[after] content address: 0x%x", (unsigned int)*content);
-        ESP_LOGI(TAG, "*content:");
-        ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_INFO);
+        ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
+        ESP_LOGD(TAG, "*content:");
+        ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
         
     } else {
         ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
