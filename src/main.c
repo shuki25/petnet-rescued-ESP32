@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <cJSON.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -8,9 +9,11 @@
 #include "freertos/semphr.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "esp_sntp.h"
 #include "esp_system.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 
 #include "config.h"
@@ -21,8 +24,10 @@
 #include "json_util.h"
 #include "util.h"
 #include "nextion.h"
+#include "feeding.h"
 
-#define TAG    "main_app"
+
+static const char *TAG = "main.c";
 
 static xQueueHandle gpio_evt_queue = NULL;
 QueueHandle_t uart_queue;
@@ -32,7 +37,11 @@ static input_state_t hopper_state;
 static input_state_t button_state;
 static wifi_info_t wifi_info;
 static petnet_rescued_settings_t petnet_settings;
+static nvs_handle eeprom_handle;
 int heap_size_start, heap_size_end;
+bool is_clock_set = false;
+feeding_schedule_t *feeding_schedule;
+uint8_t num_feeding_times;
 
 
 static void IRAM_ATTR gpio_isr_handler(void *arg) {
@@ -76,11 +85,30 @@ static void gpio_task_handler(void *arg) {
     }
 }
 
+void ntp_callback(struct timeval *tv) {
+    ESP_LOGI(TAG, "Secs: %ld", tv->tv_sec);
+    struct tm *timeinfo;
+    char buffer[50];
+
+    setenv("TZ", "PLACEHOLDERSINCEITONLYALLOCATEONCE", 1);
+    setenv("TZ", petnet_settings.tz, 1);
+    tzset();
+
+    time_t now = time(&now);
+    struct tm *utc_timeinfo = gmtime(&now);
+    strftime(buffer, sizeof(buffer), "%A, %B %d %Y - %H:%M:%S ", utc_timeinfo);
+    ESP_LOGI(TAG, "Time in UTC: %s", buffer);
+
+    timeinfo = localtime(&now);
+    strftime(buffer, sizeof(buffer), "%A, %B %d %Y - %H:%M:%S ", timeinfo);
+    ESP_LOGI(TAG, "Time in %s: %s", petnet_settings.tz, buffer);
+
+    sync_nextion_clock(UART_NUM_1, timeinfo);
+}
+
 static void initialize() {
     char *content, *value;
     cJSON *payload, *results;
-
-    petnet_settings.is_24h_mode = true;
     
     // Get settings
     api_get(&content, API_KEY, "/settings/");
@@ -108,17 +136,16 @@ static void initialize() {
     } else {
         ESP_LOGI(TAG, "Error with JSON");
     }
-    print_heap_size("Before cJSON_Delete");
+
     cJSON_Delete(payload);
-    print_heap_size("After cJSON_Delete");
     free(content);
-    print_heap_size("After free content");
 
     api_get(&content, API_KEY, "/feeding-time/");
-
     ESP_LOGD(TAG, "Content-length: %d - Hex Dump", strlen(content));
     ESP_LOG_BUFFER_HEXDUMP(TAG, content, strlen(content), ESP_LOG_DEBUG);
 
+    feeding_schedule_init(content, &feeding_schedule, &num_feeding_times);
+    ESP_LOGD(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
     free(content);
 }
 
@@ -154,22 +181,55 @@ static void wifi_led(void *data) {
     }
 }
 
+void dispense_food(uint8_t encoder_ticks) {
+    uint32_t start_ticks = hopper_state.counter;
+    uint32_t target_ticks = start_ticks + encoder_ticks;
+
+    gpio_set_level(MOTOR_RELAY, 1);
+    while (hopper_state.counter < target_ticks)
+    {
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+    }
+    gpio_set_level(MOTOR_RELAY, 0);
+    
+}
+
+void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *response) {
+    // clear buffer and payload struct
+    if (payload->string != NULL) {
+        free(payload->string);
+    }
+    if (response->string != NULL) {
+        free(response->string);
+    }
+
+    memset(buffer, 0, RX_BUFFER_SIZE);
+    memset(response, 0, sizeof(nextion_response_t));
+    memset(payload, 0, sizeof(nextion_payload_t));
+}
+
 void nextion_monitor() {
     
     char incoming_msg[RX_BUFFER_SIZE];
+    char buffer[RX_BUFFER_SIZE], format_dt_buffer[50];
     uart_event_t uart_event;
-    size_t data_len;
-    uint8_t event_code = 0;
     uint16_t loop_counter = 1;
-    bool is_display_sleeping = false;
+    bool is_display_sleeping = false, has_feeding_slot = false, get_next_meal_slot = true;
     float cpu_temp_max = 0.0, cpu_temp_min = 100.0;
-    uint8_t temp_reading;
+    float temp_reading;
     nextion_response_t response;
+    nextion_response_t response2;
     nextion_err_t err;
     nextion_payload_t payload;
     uint8_t wifi_connect = 0xff;
+    time_t next_feeding_slot, prev_feeding_slot, motor_timeout, current_time, time_diff;
+    uint8_t next_feeding_index;
+
+    motor_timeout = time(&motor_timeout);
 
     while(true) {
+
+        current_time = time(&current_time);
 
         // One time setup
         if (loop_counter == 1) {
@@ -201,9 +261,56 @@ void nextion_monitor() {
             }
         }
 
+        if (loop_counter == 4) {
+             // Sync Nextion clock with NTP Time
+            sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+            sntp_setservername(0, "pool.ntp.org");
+            sntp_init();
+            sntp_set_time_sync_notification_cb(ntp_callback);
+        }
+
+        if (loop_counter % 10 == 0 && get_next_meal_slot) {
+            get_next_feeding_time(&next_feeding_slot, &next_feeding_index, feeding_schedule, num_feeding_times);
+            ESP_LOGI(TAG, "Next feed time: %ld, index=%d", next_feeding_slot, next_feeding_index);
+            if (next_feeding_slot) {
+                if (petnet_settings.is_24h_mode) {
+                    strftime(format_dt_buffer, sizeof(format_dt_buffer), "%H:%M", localtime(&next_feeding_slot));
+                } else {
+                    strftime(format_dt_buffer, sizeof(format_dt_buffer), "%l:%M %p", localtime(&next_feeding_slot));
+                }
+                sprintf(buffer, "%s at %s", feeding_schedule[next_feeding_index].meal_name, format_dt_buffer);
+                payload.string = malloc(sizeof(char) * strlen(buffer) + 1);
+                strcpy((char *)payload.string, buffer);
+                set_value(UART_NUM_1, "page1.next_meal_name.txt", &payload, &response);
+                reset_data(buffer, &payload, &response);
+                sprintf(buffer, "%s cup for %s", feeding_schedule[next_feeding_index].feed_amount_fraction, feeding_schedule[next_feeding_index].pet_name);
+                payload.string = malloc(sizeof(char) * strlen(buffer) + 1);
+                strcpy((char *)payload.string, buffer);
+                set_value(UART_NUM_1, "page1.next_meal_desc.txt", &payload, &response);
+                reset_data(buffer, &payload, &response);
+                has_feeding_slot = true;
+                get_next_meal_slot = false;
+            }
+        }
+
         if (loop_counter % 30 == 0) {
-            temp_reading = temprature_sens_read();
-            ESP_LOGI(TAG, "ESP32 onchip temperature: %.1f\xb0 C", (temp_reading - 32) / 1.8);
+            temp_reading = get_temperature();
+            if (cpu_temp_min > temp_reading) {
+                reset_data(incoming_msg, &payload, &response);  
+                cpu_temp_min = temp_reading;
+                payload.string = malloc(sizeof(char) * 6);
+                sprintf((char *)payload.string, "%.1f", temp_reading);
+                set_value(UART_NUM_1, "page7.cpu_temp_min.txt", &payload, &response);
+            }
+            if (cpu_temp_max < temp_reading) {
+                reset_data(incoming_msg, &payload, &response);
+                cpu_temp_max = temp_reading;
+                payload.string = malloc(sizeof(char) * 6);
+                sprintf((char *)payload.string, "%.1f", temp_reading);
+                set_value(UART_NUM_1, "page7.cpu_temp_max.txt", &payload, &response);
+            }
+            reset_data(incoming_msg, &payload, &response);
+            ESP_LOGI(TAG, "ESP32 onchip temperature: %.1f\xb0 C", temp_reading);
         }
         
 
@@ -235,23 +342,47 @@ void nextion_monitor() {
 
         // If Wifi connection status changes, update the wifi icon
         if (wifi_connect != wifi_info.state) {
-            printf("\n\nBefore payload\nwinfi_info.state=%d", wifi_info.state);
             payload.number=(int)wifi_info.state;
-            printf("\n\nAfter payload\n");
             if (set_value(UART_NUM_1, "page0.flag_wifi.val", &payload, &response) == NEXTION_OK) {
                 wifi_connect = wifi_info.state;
             };
-        } 
+        }
 
-        if (response.string != NULL) {
-            free(response.string);
+        // Is it time to feed the pet?
+        if (has_feeding_slot) {
+            time_diff = abs(next_feeding_slot -  current_time);
+            if (current_time > next_feeding_slot && time_diff < 60 && current_time > motor_timeout && feeding_schedule[next_feeding_index].is_active) {
+
+                ESP_LOGI(TAG, "Scheduled meal is triggered");
+                ESP_LOGI(TAG, "current_time: %ld next_feeding_slot: %ld, difference: %ld, motor_timeout: %ld", current_time, next_feeding_slot, time_diff, motor_timeout);
+
+                reset_data(buffer, &payload, &response);
+                sprintf(buffer, "Dispensing %s", feeding_schedule[next_feeding_index].meal_name);
+                payload.string = malloc(sizeof(char) * strlen(buffer) + 1);
+                strcpy((char *)payload.string, buffer);
+                ESP_LOGI(TAG, "set_value: %s", payload.string);
+                set_value(UART_NUM_1, "page6.meal_name.txt", &payload, &response);
+                
+                reset_data(buffer, &payload, &response);
+                sprintf(buffer, "%s cup for %s", feeding_schedule[next_feeding_index].feed_amount_fraction,
+                    feeding_schedule[next_feeding_index].pet_name);
+                payload.string = malloc(sizeof(char) * strlen(buffer) + 1);
+                strcpy((char *)payload.string, buffer);
+                ESP_LOGI(TAG, "set_value: %s", payload.string);
+                set_value(UART_NUM_1, "page6.meal_desc.txt", &payload, &response);
+
+                send_command(UART_NUM_1, "page page6", &response);
+                dispense_food(feeding_schedule[next_feeding_index].interrupter_count);
+
+                vTaskDelay(1500 / portTICK_PERIOD_MS);
+                send_command(UART_NUM_1, "page page1", &response);
+                motor_timeout = current_time + 120;
+                get_next_meal_slot = true;
+            }
         }
-        if (payload.string != NULL) {
-            free(payload.string);
-        }
-        memset(incoming_msg, 0, RX_BUFFER_SIZE);
-        memset(&response, 0, sizeof(nextion_response_t));
-        memset(&payload, 0, sizeof(nextion_payload_t));
+        
+
+        reset_data(incoming_msg, &payload, &response);
 
         if (xQueueReceive(uart_queue, &uart_event, 500 / portTICK_PERIOD_MS)) {
             switch (uart_event.type)
@@ -284,7 +415,7 @@ void nextion_monitor() {
                 ESP_LOGI(TAG, "UART_PATTERN_DET");
                 uart_read_bytes(UART_NUM_1, (uint8_t *)incoming_msg, uart_event.size, pdMS_TO_TICKS(100));
                 if (incoming_msg[0]) {
-                uint8_t event_code = parse_event((uint8_t *)incoming_msg, 32, &response);
+                parse_event((uint8_t *)incoming_msg, 32, &response);
                 ESP_LOG_BUFFER_HEXDUMP(TAG, incoming_msg, 32, ESP_LOG_INFO);
                 get_packet_length(incoming_msg[0]);
                 ESP_LOGI(TAG, "code: 0x%0x, page: %d, component: %d, event: %d, x: %d, y: %d",
@@ -303,11 +434,25 @@ void nextion_monitor() {
         }
         
         // Process Nextion Event
-
-        switch (event_code)
+        switch (response.event_code)
         {
         case NEXTION_TOUCH:
             ESP_LOGI(TAG, "NEXTION_TOUCH");
+            if (response.page == 1 && response.component == 20) {
+                temp_reading = get_temperature();
+                payload.string = malloc(sizeof(char) * 6);
+                sprintf((char *)payload.string, "%.1f", temp_reading);
+                set_value(UART_NUM_1, "page7.cpu_temp.txt", &payload, &response2);
+            } else if (response.page == 1 && response.component == 12) {
+                dispense_food(4);
+                send_command(UART_NUM_1, "page page1", &response2);
+            }
+            else if (response.page == 1 && response.component == 27) { 
+                is_display_sleeping = true;
+            }            
+            else if (response.page == 14 && response.component == 0) { 
+                is_display_sleeping = false;
+            }
             break;           
         case NEXTION_TOUCH_COORDINATE:
             ESP_LOGI(TAG, "NEXTION_TOUCH_COORDINATE");
@@ -317,9 +462,11 @@ void nextion_monitor() {
             break;  
         case NEXTION_AUTO_SLEEP:
             ESP_LOGI(TAG, "NEXTION_AUTO_SLEEP");
+            is_display_sleeping = true;
             break;      
         case NEXTION_AUTO_WAKE:
             ESP_LOGI(TAG, "NEXTION_AUTO_WAKE");
+            is_display_sleeping = false;
             break;       
         case NEXTION_STARTUP:
             ESP_LOGI(TAG, "NEXTION_STARTUP");
@@ -329,18 +476,8 @@ void nextion_monitor() {
             break; 
         }
 
-        // clear buffer and response struct
-
-        if (response.string != NULL) {
-            free(response.string);
-        }
-        if (payload.string != NULL) {
-            free(payload.string);
-        }
-
-        memset(incoming_msg, 0, RX_BUFFER_SIZE);
-        memset(&response, 0, sizeof(nextion_response_t));
-        memset(&payload, 0, sizeof(nextion_payload_t));
+        reset_data(incoming_msg, &payload, &response);
+        memset(&response2, 0, sizeof(nextion_response_t));
 
         vTaskDelay(500 / portTICK_PERIOD_MS);
         loop_counter++;
@@ -349,7 +486,53 @@ void nextion_monitor() {
 
 void app_main(void) {
     heap_size_start = esp_get_free_heap_size();
-    print_heap_size("");
+    print_heap_size("Initial Boot");
+    size_t nvs_size;
+
+    // Delay to allow boot up to stablize
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    srand(rand() % 1000);
+
+    // Initialize NVS
+    ESP_LOGI(TAG, "Initializing NVS");
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
+
+    ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
+
+    esp_err_t rs = nvs_get_blob(eeprom_handle, "settings", (petnet_rescued_settings_t *)&petnet_settings, &nvs_size);
+    
+    if(nvs_size != sizeof(petnet_rescued_settings_t) && rs == ESP_OK) {
+        ESP_LOGI(TAG, "The size of petnet_rescued_settings_t has changed. Erasing Flash and Reinitialize.");
+        nvs_close(eeprom_handle);
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_init());
+        ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
+        rs = ESP_ERR_NVS_NOT_FOUND;
+    }
+    switch (rs)
+    {
+    case ESP_ERR_NVS_NOT_FOUND:
+        memset(&petnet_settings, 0, sizeof(petnet_rescued_settings_t));
+        get_chip_id(petnet_settings.device_id);
+        strcpy(petnet_settings.tz, "UTC");
+        strcpy(petnet_settings.api_key, API_KEY);
+        secret_generator(petnet_settings.secret, sizeof(petnet_settings.secret));
+        petnet_settings.is_24h_mode = false;
+        ESP_ERROR_CHECK(nvs_set_blob(eeprom_handle, "settings", &petnet_settings, sizeof(petnet_rescued_settings_t)));
+        ESP_LOGI(TAG, "New settings was created and saved to NVS");
+        break;
+    
+    default:
+        break;
+    }
+
+    ESP_LOGI(TAG, "device id: %s, tz: %s, api: %s, secret: %s, 24h: %d", petnet_settings.device_id, petnet_settings.tz,
+        petnet_settings.api_key, petnet_settings.secret ,petnet_settings.is_24h_mode);
 
     char chip_id[24];
     get_chip_id(chip_id);
@@ -398,37 +581,23 @@ void app_main(void) {
         .stop_bits = UART_STOP_BITS_1,      
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE 
     };
-
-    // Delay to allow boot up to stablize
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-    // Initialize NVS
-    printf("Initializing NVS\n");
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK( ret );
     
     vTaskDelay(200 / portTICK_PERIOD_MS);
 
     xTaskCreate(wifi_led, "wifi_status_led", 1024, &blue_led, 10, NULL);
-    print_heap_size("");
+    print_heap_size("Before Wifi Connection");
 
     ESP_LOGI(TAG, "Connecting to WiFi -- SSID: %s", WIFI_SSID);
     esp_err_t err = wifi_connect(&wifi_info, WIFI_SSID, WIFI_PASS);
     
     if(err == ESP_OK) {
-        // char mac_addr[18];
-        // bssid2mac(mac_addr, wifi_info.ap_info.bssid);
         ESP_LOGI(TAG, "WiFi Connected. AP MAC ID:" MACSTR "\n", MAC2STR(wifi_info.ap_info.bssid));
         ESP_LOGI(TAG, "Station IP:" IPSTR " MAC ID:" MACSTR "\n", IP2STR(&wifi_info.netif_info.ip), MAC2STR(wifi_info.mac));
     }
     
-    print_heap_size("");
+    print_heap_size("After Wifi Connection");
 
-    list_AP();
+    // list_AP();
     initialize();
 
     // Set up Semahpore Mutex
