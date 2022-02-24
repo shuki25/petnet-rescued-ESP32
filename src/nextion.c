@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include "esp_log.h"
 #include "driver/uart.h"
 #include "freertos/queue.h"
@@ -11,7 +12,7 @@
 #include "main.h"
 #include "nextion.h"
 
-#define TAG "Nextion"
+#define TAG "nextion.c"
 
 // Nextion response packet sizes
 
@@ -53,6 +54,12 @@ nextion_err_t send_command(uart_port_t uart_port, char *command, nextion_respons
     char *prepared_command = malloc(strlen(command) + 4);
     sprintf(prepared_command, "%s%s", command, EOL);
     esp_err_t status = NEXTION_FAIL;
+
+    // Initialize Response
+    if (response->string != NULL) {
+        free(response->string);
+    }
+    memset(response, 0, sizeof(nextion_response_t));
 
     // Acquire mutex lock
     if (xSemaphoreTake(nextion_mutex, 1000 / portTICK_PERIOD_MS ) == pdTRUE) {
@@ -125,6 +132,12 @@ nextion_err_t get_value(uart_port_t uart_port, char *key, nextion_response_t *re
     char *prepared_command = malloc(strlen(key) + 8);
     sprintf(prepared_command, "get %s%s", key, EOL);
     esp_err_t status = NEXTION_FAIL;
+
+    // Initialize Response
+    if (response->string != NULL) {
+        free(response->string);
+    }
+    memset(response, 0, sizeof(nextion_response_t));
 
     // Acquire mutex lock
     if (xSemaphoreTake(nextion_mutex, 1000 / portTICK_PERIOD_MS ) == pdTRUE) {
@@ -200,6 +213,12 @@ nextion_err_t set_value(uart_port_t uart_port, char *key, nextion_payload_t *pay
     char *prepared_command = NULL;
     uint8_t num_digits=0;
 
+    // Initialize Response
+    if (response->string != NULL) {
+        free(response->string);
+    }
+    memset(response, 0, sizeof(nextion_response_t));
+
     // Preparing Nextion set value payload
 
     if (payload->string != NULL)
@@ -228,7 +247,7 @@ nextion_err_t set_value(uart_port_t uart_port, char *key, nextion_payload_t *pay
     if (xSemaphoreTake(nextion_mutex, 1000 / portTICK_PERIOD_MS ) == pdTRUE) {
         ESP_LOGI(TAG, "Mutex lock acquired");
         ESP_LOGI(TAG, "Sending command to UART 1: %s", prepared_command);
-        // uart_disable_pattern_det_intr(UART_NUM_1);
+
         uart_write_bytes(uart_port, prepared_command, strlen(prepared_command));
 
         // Wait for response
@@ -275,8 +294,6 @@ nextion_err_t set_value(uart_port_t uart_port, char *key, nextion_payload_t *pay
                 }
             }
         }
-        // Re-enable pattern detection interrupt
-        // uart_enable_pattern_det_baud_intr(UART_NUM_1, EOL_PATTERN_CHAR, PATTERN_LEN, 9, 0, 0);
 
         // Release mutex lock
         xSemaphoreGive(nextion_mutex);
@@ -357,4 +374,27 @@ uint8_t parse_event(uint8_t *event_packet, uint16_t packet_size, nextion_respons
         break;
     }
     return event_type;
+}
+
+nextion_err_t sync_nextion_clock(uart_port_t uart_port, struct tm *timeinfo) {
+    nextion_payload_t payload;
+    nextion_response_t response;
+
+    memset(&payload, 0, sizeof(nextion_payload_t));
+    memset(&response, 0, sizeof(nextion_response_t));
+
+    payload.number = timeinfo->tm_year  + 1900;
+    set_value(uart_port, "rtc0", &payload, &response);
+    payload.number = timeinfo->tm_mon + 1;
+    set_value(uart_port, "rtc1", &payload, &response);
+    payload.number = timeinfo->tm_mday;
+    set_value(uart_port, "rtc2", &payload, &response);
+    payload.number = timeinfo->tm_hour;
+    set_value(uart_port, "rtc3", &payload, &response);
+    payload.number = timeinfo->tm_min;
+    set_value(uart_port, "rtc4", &payload, &response);
+    payload.number = timeinfo->tm_sec;
+    set_value(uart_port, "rtc5", &payload, &response);
+
+    return NEXTION_OK;
 }
