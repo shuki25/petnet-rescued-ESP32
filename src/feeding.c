@@ -6,6 +6,8 @@
 #include "util.h"
 
 const char *TAG = "feeding.c";
+int feeding_dow[7] = {1, 2, 4, 8, 16, 32, 64};
+
 
 void feeding_schedule_init(char *json_payload, feeding_schedule_t **dp_schedule, uint8_t *nbr_feeding_times) {
     cJSON *payload, *object, *results;
@@ -134,7 +136,9 @@ void get_next_feeding_time(time_t *next_time, uint8_t *feed_index, feeding_sched
         strftime(buffer, sizeof(buffer), "%A, %B %d %Y - %H:%M:%S ", timeinfo);
         ESP_LOGI(TAG, "[%d] %ld -- %ld -- %s", (int)i, feeding_time, feeding_time - current_time, buffer);
         time_diff = feeding_time - current_time;
-        if (time_diff <= smallest_diff && (timeinfo->tm_wday & schedule[i].dow)) {
+        ESP_LOGI(TAG, "time_diff: %ld smallest_diff: %ld tm_wday: %d", time_diff, smallest_diff, timeinfo->tm_wday);
+        if (time_diff <= smallest_diff && (feeding_dow[timeinfo->tm_wday] & schedule[i].dow)) {
+            ESP_LOGI(TAG, "Is smaller, using this");
             *feed_index = (uint8_t)i;
             smallest_diff = time_diff;
             *next_time = feeding_time;
