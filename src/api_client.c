@@ -13,6 +13,8 @@
 
 #define TAG "api_client"
 
+extern const uint8_t cert[] asm("_binary_R3_cer_start");
+
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
     static char *output_buffer;  // Buffer to store response of http request from event handler
@@ -58,8 +60,8 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
                 int content_length = esp_http_client_get_content_length(evt->client);
                 output_buffer[content_length] = '\0';
                 *data = output_buffer;
-                ESP_LOGI(TAG, "user_data address: 0x%x", (unsigned int)*data);
-                ESP_LOGI(TAG, "user_data: %s", (char *)*data);
+                // ESP_LOGI(TAG, "user_data address: 0x%x", (unsigned int)*data);
+                // ESP_LOGI(TAG, "user_data: %s", (char *)*data);
                 output_buffer = NULL;
             }
             output_len = 0;
@@ -85,17 +87,20 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 }
 
 
-void api_get(char **content, char *auth_token, char *endpoint) {
+uint8_t api_get(char **content, char *auth_token, char *device_key, char *endpoint) {
 
     esp_err_t err;
+    uint8_t status_code = (uint8_t)500;
     char url[256];
     char authorization[256];
     char *data;
 
-    ESP_LOGI(TAG, "address: 0x%x", (unsigned int)&content);
+    // ESP_LOGI(TAG, "address: 0x%x", (unsigned int)&content);
 
     sprintf(url, "%s%s", API_BASE_URL, endpoint);
-    sprintf(authorization, "Token %s", auth_token);
+    if (strlen(auth_token) > 1) {
+        sprintf(authorization, "Token %s", auth_token);
+    }
     ESP_LOGI(TAG, "API Endpoint: %s", url);
 
     esp_http_client_config_t client_config = {
@@ -103,28 +108,94 @@ void api_get(char **content, char *auth_token, char *endpoint) {
         .method = HTTP_METHOD_GET,
         .event_handler = _http_event_handler,
         .user_data = &data,
-        .disable_auto_redirect = true
+        .disable_auto_redirect = true,
+        .cert_pem = (char *)cert
     };
 
-    ESP_LOGI(TAG, "[before] data address: 0x%x", (unsigned int)data);
+    // ESP_LOGI(TAG, "[before] data address: 0x%x", (unsigned int)data);
 
     esp_http_client_handle_t client = esp_http_client_init(&client_config);
-    ESP_ERROR_CHECK(esp_http_client_set_header(client, "Authorization", authorization));
+    if (strlen(auth_token) > 1) {
+        ESP_ERROR_CHECK(esp_http_client_set_header(client, "Authorization", authorization));
+    }
+    if (strlen(auth_token) > 1) {
+        ESP_ERROR_CHECK(esp_http_client_set_header(client, "X-Device-Key", device_key));
+    }
+
     err = esp_http_client_perform(client);
 
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "HTTP STATUS CODE: %d", esp_http_client_get_status_code(client));
+        status_code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
         *content = data;
-        ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
-        ESP_LOGD(TAG, "*content:");
-        ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
-        
+        // ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
+        // ESP_LOGD(TAG, "*content:");
+        // ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
     } else {
         ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
-        free(client_config.user_data);
+        *content = NULL;
     }
     // ESP_LOG_BUFFER_HEX(TAG, content, strlen(content));
 
     esp_http_client_cleanup(client);
 
+    return status_code;
+}
+
+uint8_t api_post(char **content, char *auth_token, char *device_key, char *endpoint, char *post_data) {
+
+    esp_err_t err;
+    uint8_t status_code = (uint8_t)500;
+    char url[256];
+    char authorization[256];
+    char *data;
+
+    // ESP_LOGI(TAG, "address: 0x%x", (unsigned int)&content);
+
+    sprintf(url, "%s%s", API_BASE_URL, endpoint);
+    if (strlen(auth_token) > 1) {
+        sprintf(authorization, "Token %s", auth_token);
+    }
+    ESP_LOGI(TAG, "API Endpoint: %s", url);
+
+    esp_http_client_config_t client_config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .event_handler = _http_event_handler,
+        .user_data = &data,
+        .disable_auto_redirect = true,
+        .cert_pem = (char *)cert
+    };
+
+    // ESP_LOGI(TAG, "[before] data address: 0x%x", (unsigned int)data);
+
+    esp_http_client_handle_t client = esp_http_client_init(&client_config);
+    if (strlen(auth_token) > 1) {
+        ESP_ERROR_CHECK(esp_http_client_set_header(client, "Authorization", authorization));
+    }
+    if (strlen(auth_token) > 1) {
+        ESP_ERROR_CHECK(esp_http_client_set_header(client, "X-Device-Key", device_key));
+    }
+    if (strlen(post_data) > 1) {
+        ESP_ERROR_CHECK(esp_http_client_set_post_field(client, post_data, strlen(post_data)));
+    }
+
+    err = esp_http_client_perform(client);
+
+    if (err == ESP_OK) {
+        status_code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
+        *content = data;
+        // ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
+        // ESP_LOGD(TAG, "*content:");
+        // ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
+    } else {
+        ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+        *content = NULL;
+    }
+    // ESP_LOG_BUFFER_HEX(TAG, content, strlen(content));
+
+    esp_http_client_cleanup(client);
+
+    return status_code;
 }
