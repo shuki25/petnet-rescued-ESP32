@@ -87,10 +87,10 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 }
 
 
-uint8_t api_get(char **content, char *auth_token, char *device_key, char *endpoint) {
+uint16_t api_get(char **content, char *auth_token, char *device_key, char *endpoint) {
 
     esp_err_t err;
-    uint8_t status_code = (uint8_t)500;
+    uint16_t status_code = (uint16_t)500;
     char url[256];
     char authorization[256];
     char *data;
@@ -121,6 +121,7 @@ uint8_t api_get(char **content, char *auth_token, char *device_key, char *endpoi
     if (strlen(auth_token) > 1) {
         ESP_ERROR_CHECK(esp_http_client_set_header(client, "X-Device-Key", device_key));
     }
+    ESP_ERROR_CHECK(esp_http_client_set_header(client, "Content-Type", "application/json"));
 
     err = esp_http_client_perform(client);
 
@@ -142,10 +143,10 @@ uint8_t api_get(char **content, char *auth_token, char *device_key, char *endpoi
     return status_code;
 }
 
-uint8_t api_post(char **content, char *auth_token, char *device_key, char *endpoint, char *post_data) {
+uint16_t api_post(char **content, char *auth_token, char *device_key, char *endpoint, char *post_data) {
 
     esp_err_t err;
-    uint8_t status_code = (uint8_t)500;
+    uint16_t status_code = (uint16_t)500;
     char url[256];
     char authorization[256];
     char *data;
@@ -176,6 +177,8 @@ uint8_t api_post(char **content, char *auth_token, char *device_key, char *endpo
     if (strlen(auth_token) > 1) {
         ESP_ERROR_CHECK(esp_http_client_set_header(client, "X-Device-Key", device_key));
     }
+    ESP_ERROR_CHECK(esp_http_client_set_header(client, "Content-Type", "application/json"));
+
     if (strlen(post_data) > 1) {
         ESP_ERROR_CHECK(esp_http_client_set_post_field(client, post_data, strlen(post_data)));
     }
