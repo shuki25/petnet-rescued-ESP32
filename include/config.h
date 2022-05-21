@@ -11,12 +11,14 @@
 #define MOTOR_RELAY     19
 #define HOPPER_SNSR     18
 #define BUTTON          23
-#define BATTERY_SNSR    4
+#define BATTERY_ALERT   4
+#define POWER_SNSR      5  
 
 #define GPIO_OUTPUT_PIN_SEL     ((1ULL<<RED_LED) | (1ULL<<GREEN_LED) | (1ULL<<BLUE_LED))
-#define GPIO_INPUT_PIN_SEL      ((1ULL<<MOTOR_SNSR) | (1ULL<<BATTERY_SNSR))
+#define GPIO_INPUT_PIN_SEL      ((1ULL<<MOTOR_SNSR) | (1ULL<<BATTERY_ALERT))
 #define GPIO_ANYEDGE_PIN_SEL    ((1ULL<<HOPPER_SNSR))
 #define GPIO_BUTTON_SEL         ((1ULL<<BUTTON))
+#define GPIO_POWER_SNSR_SEL     ((1ULL<<POWER_SNSR))
 #define ESP_INTR_FLAG_DEFAULT   0
 
 #define UART_RX_PIN     16
@@ -50,7 +52,8 @@
 #define WIFI_MAX_RETRY  5
 #define API_KEY         "63b31b00a770ac4fc22154fdc8eb4875958607fe"
 // #define API_BASE_URL    "http://192.168.2.118:8111/api"
-#define API_BASE_URL    "https://7453-24-59-154-128.ngrok.io/api"
+// #define API_BASE_URL    "https://7453-24-59-154-128.ngrok.io/api"
+#define API_BASE_URL    "https://smartpetfeeder.net/api"
 
 #ifndef WIFI_SSID
 #define WIFI_SSID       CONFIG_ESP_WIFI_SSID
