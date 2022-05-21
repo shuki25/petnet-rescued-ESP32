@@ -12,6 +12,7 @@
 #define MAX1704X_REGISTER_MODE          0x06
 #define MAX1704X_REGISTER_VERSION       0x08
 #define MAX1704X_REGISTER_CONFIG        0x0C
+#define MAX1704X_REGISTER_CRATE         0x16
 #define MAX1704X_REGISTER_COMMAND       0xFE
 #define WRITE_BIT I2C_MASTER_WRITE              /*!< I2C master write */
 #define READ_BIT I2C_MASTER_READ                /*!< I2C master read */
@@ -26,12 +27,12 @@
 #define MAX1704X_DEFER_ADDRESS          (uint8_t)0
 
 #define MAX17043_mV                     1.25
-#define MAX1704X_PRECISION              MAX17043_mV
+#define MAX17048_mV                     0.078125
+#define MAX1704X_PRECISION              MAX17048_mV
+#define MAX1704X_CRATE_PRECISION        0.208
 
-void check_efuse(void);
-void print_char_val_type(esp_adc_cal_value_t val_type);
-void setup_adc_channel(void);
-void get_battery_reading(float *voltage, float *soc_percent);
+
+void get_battery_reading(float *voltage, float *soc_percent, float *crate);
 
 esp_err_t __attribute__((unused)) i2c_master_read_register(i2c_port_t i2c_num, uint8_t memory_addr, uint8_t *data_rd, size_t size);
 
