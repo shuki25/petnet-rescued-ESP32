@@ -18,9 +18,9 @@ typedef struct {
 
 extern EventGroupHandle_t s_wifi_event_group;
 extern esp_err_t wifi_status;
+extern uint8_t force_reprovisioning;
 
-void list_AP();
-void bssid2mac(char *mac_addr, uint8_t *bssid);
-esp_err_t wifi_connect(wifi_info_t *wifi_info, char *ssid, char *password);
+esp_err_t wifi_provisioning(wifi_info_t *wifi_info);
+void smartconfig_task(void * parm);
 
 #endif
