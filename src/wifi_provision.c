@@ -21,7 +21,7 @@ EventGroupHandle_t s_wifi_event_group;
 esp_err_t wifi_status = ESP_FAIL;
 static const int CONNECTED_BIT = BIT0;
 static const int ESPTOUCH_DONE_BIT = BIT1;
-static const char *TAG = "wifi_provision.h";
+static const char *TAG = "wifi_provision.c";
 
 uint8_t force_reprovisioning = false;
 wifi_config_t wifi_config;
@@ -165,10 +165,6 @@ esp_err_t wifi_provisioning(wifi_info_t *wifi_info)
         esp_wifi_sta_get_ap_info(&wifi_info->ap_info);
         esp_netif_get_mac(sta_netif, wifi_info->mac);
         wifi_info->state = true;
-        // wifi_info->bssid = wifi_config.bssid;
-        // wifi_info->ssid = wifi_config.;
-        // wifi_info->primary = wifi_config.primary ;
-        // wifi_info->rssi = wifi_config.rssi;
     } else if (bits & WIFI_FAIL_BIT) {
         ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s", wifi_config.sta.ssid, wifi_config.sta.password);
         wifi_info->state = false;
@@ -182,8 +178,6 @@ esp_err_t wifi_provisioning(wifi_info_t *wifi_info)
         ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id));
         vEventGroupDelete(s_wifi_event_group);
     }
-
-
 
     if(wifi_info->state) {
         return ESP_OK;
