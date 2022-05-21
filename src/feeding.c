@@ -33,28 +33,25 @@ void feeding_schedule_init(char *json_payload, feeding_schedule_t **dp_schedule,
     if(cJSON_IsArray(results)) {
         int i=0;
         cJSON_ArrayForEach(object, results) {
-            cJSON *fs = cJSON_GetObjectItem(object, "feeding_schedule");
+            // cJSON *fs = cJSON_GetObjectItem(object, "feeding_schedule");
             cJSON *dow = cJSON_GetObjectItem(object, "dow");
             cJSON *time = cJSON_GetObjectItem(object, "time");
             cJSON *motor_timing = cJSON_GetObjectItem(object, "motor_timing");
-            
-            if (cJSON_IsObject(fs)) {
-                cJSON *active_flag = cJSON_GetObjectItem(fs, "active_flag");
-                cJSON *meal_name = cJSON_GetObjectItem(fs, "meal_name");            
-                cJSON *pet = cJSON_GetObjectItem(fs, "pet");
-                if (cJSON_IsString(meal_name)) {
-                    schedule[i].meal_name = malloc(sizeof(char) * strlen(meal_name->valuestring) + 1);
-                    strcpy(schedule[i].meal_name, meal_name->valuestring);
-                }
-                if (cJSON_IsBool(active_flag)) {
-                    schedule[i].is_active = active_flag->valueint;
-                }
-                if (cJSON_IsObject(pet)) {
-                    cJSON *pet_name = cJSON_GetObjectItem(pet, "name");
-                    if (cJSON_IsString(pet_name)) {
-                        schedule[i].pet_name = malloc(sizeof(char) * strlen(pet_name->valuestring) + 1);
-                        strcpy(schedule[i].pet_name, pet_name->valuestring);
-                    }
+            cJSON *active_flag = cJSON_GetObjectItem(object, "active_flag");
+            cJSON *meal_name = cJSON_GetObjectItem(object, "meal_name");            
+            cJSON *pet = cJSON_GetObjectItem(object, "pet");
+            if (cJSON_IsString(meal_name)) {
+                schedule[i].meal_name = malloc(sizeof(char) * strlen(meal_name->valuestring) + 1);
+                strcpy(schedule[i].meal_name, meal_name->valuestring);
+            }
+            if (cJSON_IsBool(active_flag)) {
+                schedule[i].is_active = active_flag->valueint;
+            }
+            if (cJSON_IsObject(pet)) {
+                cJSON *pet_name = cJSON_GetObjectItem(pet, "name");
+                if (cJSON_IsString(pet_name)) {
+                    schedule[i].pet_name = malloc(sizeof(char) * strlen(pet_name->valuestring) + 1);
+                    strcpy(schedule[i].pet_name, pet_name->valuestring);
                 }
             }
 
