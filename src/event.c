@@ -12,6 +12,7 @@
 #include "api_client.h"
 #include "feeding.h"
 #include "logging.h"
+#include "ota_update.h"
 
 #define TAG "event.c"
 
@@ -30,7 +31,7 @@ uint16_t notify_event_completed(uint32_t event_id) {
     return status_code;
 }
 
-void process_event(cJSON *event) {
+uint16_t process_event(cJSON *event) {
     cJSON *rs, *json_payload;
     uint32_t event_id = (uint32_t)99999999, value_number;
     uint16_t event_code = (uint16_t)999, status_code;
@@ -72,16 +73,61 @@ void process_event(cJSON *event) {
         case SMART_FEEDER_EVENT_SCHEDULE_CHANGE:
             ESP_LOGI(TAG, "in SMART_FEEDER_EVENT_SCHEDULE_CHANGE");
             feeding_schedule_free(&feeding_schedule, num_feeding_times);
-            api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/feeding-time/");
-            feeding_schedule_init(content, &feeding_schedule, &num_feeding_times);
-            get_next_meal_slot = true;
-            ESP_LOGI(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
+            status_code = api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/feeding-schedule/");
+            if (status_code == 200) {
+                feeding_schedule_init(content, &feeding_schedule, &num_feeding_times);
+                get_next_meal_slot = true;
+                ESP_LOGI(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
+            }
             free(content);
             status_code = notify_event_completed(event_id);
+            break;
+            
+
+        case SMART_FEEDER_EVENT_SETTINGS_CHANGE:
+            ESP_LOGI(TAG, "in SMART_FEEDER_EVENT_SETTINGS_CHANGE");
+            status_code = api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/settings/");
+            if (status_code == 200) {
+                json_payload = cJSON_Parse(content);
+                if (json_payload != NULL) {
+                    rs = cJSON_GetObjectItem(json_payload, "results");
+                    value_string = fetch_json_value(rs, "is_setup_done");
+                    if (value_string) {
+                        petnet_settings.is_setup_done = atoi(value_string);
+                    }
+                    value_string = fetch_json_value(rs, "tz_esp32");
+                    if (value_string) {
+                        strcpy(petnet_settings.tz, value_string);
+                    }
+                } else {
+                    ESP_LOGI(TAG, "Error with JSON");
+                }
+                cJSON_Delete(json_payload);
+            }
+            status_code = notify_event_completed(event_id);
+            free(content);
+            break;
+
+        case SMART_FEEDER_EVENT_FACTORY_RESET:
+            ESP_LOGI(TAG, "Resetting to Factory Settings");
+            status_code = notify_event_completed(event_id);
+            break;
+
+        case SMART_FEEDER_EVENT_WIFI_SETTING_RESET:
+            ESP_LOGI(TAG, "Resetting WiFi Credentials");
+            status_code = notify_event_completed(event_id);
+            break;
+        
+        case SMART_FEEDER_EVENT_FIRMWARE_UPDATE:
+            ESP_LOGI(TAG, "Downloading new Firmware update");
+            status_code = notify_event_completed(event_id);
+            ota_update_task();
             break;
 
         default:
             ESP_LOGI(TAG, "Unknown Event Code: %d", event_code);
+            status_code = notify_event_completed(event_id);
             break;
     }
+    return event_code;
 }
