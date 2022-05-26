@@ -121,7 +121,9 @@ uint16_t process_event(cJSON *event) {
         case SMART_FEEDER_EVENT_FIRMWARE_UPDATE:
             ESP_LOGI(TAG, "Downloading new Firmware update");
             status_code = notify_event_completed(event_id);
+            red_blinky = true;
             ota_update_task();
+            red_blinky = false;
             break;
 
         default:

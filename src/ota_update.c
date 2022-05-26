@@ -39,6 +39,8 @@ static void __attribute__((noreturn)) task_fatal_error(void)
     (void)vTaskDelete(NULL);
 
     while (1) {
+        red_blinky = false;
+        gpio_set_level(RED_LED, 0);
         ;
     }
 }
@@ -208,5 +210,7 @@ void ota_update_task()
         task_fatal_error();
     }
     ESP_LOGI(TAG, "Prepare to restart system!");
+    gpio_set_level(GREEN_LED, 0);
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
     esp_restart();
 }

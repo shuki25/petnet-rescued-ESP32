@@ -61,6 +61,8 @@ bool is_clock_set = false;
 feeding_schedule_t *feeding_schedule;
 uint8_t num_feeding_times;
 bool get_next_meal_slot = true;
+uint8_t red_blinky, green_blinky;
+
 
 
 static void IRAM_ATTR gpio_isr_handler(void *arg) {
@@ -98,10 +100,12 @@ static void gpio_task_handler(void *arg) {
                 if(current_state == 1) {
                     button_state.counter++;
                     printf("button count: %d\n", button_state.counter);
-                    print_heap_size("intsig");
-                    flag_wifi = !flag_wifi;
-                    wifi_info.state = flag_wifi;
-                    ESP_LOGI(TAG, "flag_wifi: %d", flag_wifi);
+                    // print_heap_size("intsig");
+                    // flag_wifi = !flag_wifi;
+                    // wifi_info.state = flag_wifi;
+                    // ESP_LOGI(TAG, "flag_wifi: %d", flag_wifi);
+                    ESP_LOGI(TAG, "red_led - active: %d", red_blinky);
+                    red_blinky = !red_blinky;
                 }
                 button_state.state = current_state;
             }
@@ -275,13 +279,45 @@ static bool initialize() {
     return true;
 }
 
-static void blinky_task(void *data) {
+static void red_blinky_task(void *data) {
     led_config_t led = *(led_config_t *) data;
+    uint8_t previous_state = red_blinky;
+    ESP_LOGI(TAG, "blinky_task: gpio: %d active_state: %d", led.io_num, red_blinky);
 
     while(true) {
+        if(previous_state != red_blinky) {
+            ESP_LOGI(TAG, "blinky_task state changed. active_state: %d", red_blinky);
+            previous_state = red_blinky;
+        }
         vTaskDelay(led.delay / portTICK_PERIOD_MS);
-        led.state = !led.state;
-        gpio_set_level(led.io_num, led.state);
+        if(red_blinky == 1) {    
+            led.state = !led.state;
+            gpio_set_level(led.io_num, led.state);
+        }
+        else {
+            gpio_set_level(led.io_num, 1);
+        }
+    }
+}
+
+static void green_blinky_task(void *data) {
+    led_config_t led = *(led_config_t *) data;
+    uint8_t previous_state = green_blinky;
+    ESP_LOGI(TAG, "blinky_task: gpio: %d active_state: %d", led.io_num, green_blinky);
+
+    while(true) {
+        if(previous_state != green_blinky) {
+            ESP_LOGI(TAG, "blinky_task state changed. active_state: %d", green_blinky);
+            previous_state = green_blinky;
+        }
+        vTaskDelay(led.delay / portTICK_PERIOD_MS);
+        if(green_blinky == 1) {    
+            led.state = !led.state;
+            gpio_set_level(led.io_num, led.state);
+        }
+        else {
+            gpio_set_level(led.io_num, 1);
+        }
     }
 }
 
@@ -341,7 +377,7 @@ void dispense_food(uint8_t encoder_ticks) {
 
     bool fade = true;
 
-    gpio_set_level(RED_LED, 0);
+    green_blinky = true;
 
     while (hopper_state.counter < target_ticks)
     {
@@ -361,7 +397,7 @@ void dispense_food(uint8_t encoder_ticks) {
     ledc_set_duty(PWM_MODE, PWM_CHANNEL, 0);
     ledc_update_duty(PWM_MODE, PWM_CHANNEL);
 
-    gpio_set_level(RED_LED, 1);
+    green_blinky = false;
 }
 
 void task_manager() {
@@ -472,8 +508,8 @@ void task_manager() {
 
         if (loop_counter % 20 == 0) {
             get_battery_reading(&battery_voltage, &battery_soc, &battery_crate);
-            sprintf(heartbeat_data, "{\"battery_soc\": %.2f, \"battery_voltage\": %.2f, \"battery_crate\":%.2f, \"on_power\": %d}", 
-                battery_soc, battery_voltage, battery_crate ,!power_state.state);
+            sprintf(heartbeat_data, "{\"battery_soc\": %.2f, \"battery_voltage\": %.2f, \"battery_crate\":%.2f, \"on_power\": %d, \"control_board_revision\": \"%s\", \"firmware_version\": \"%s\"}", 
+                battery_soc, battery_voltage, battery_crate ,!power_state.state, CONTROL_BOARD_REVISION, petnet_settings.firmware_version);
             status_code = api_post(&api_content, petnet_settings.api_key, petnet_settings.device_key, "/device/heartbeat/", heartbeat_data);
             if (status_code == 200) {
                 json_payload = cJSON_Parse(api_content);
@@ -545,9 +581,7 @@ void task_manager() {
                     send_command(UART_NUM_1, "page page6", &response);
                 }
 
-                gpio_set_level(RED_LED, 0);
                 dispense_food(feeding_schedule[next_feeding_index].interrupter_count);
-                gpio_set_level(RED_LED, 1);
                 status_code = log_feeding(feeding_schedule[next_feeding_index].pet_name, "S", feeding_schedule[next_feeding_index].feed_amount);
                 vTaskDelay(1500 / portTICK_PERIOD_MS);
                 
@@ -718,6 +752,12 @@ void app_main(void) {
     {
     case ESP_ERR_NVS_NOT_FOUND:
         memset(&petnet_settings, 0, sizeof(petnet_rescued_settings_t));
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        esp_app_desc_t running_app_info;
+        if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK) {
+            ESP_LOGI(TAG, "Running firmware version: %s", running_app_info.version);
+        }
+        strcpy(petnet_settings.firmware_version, running_app_info.version);
         get_chip_id(petnet_settings.device_id);
         strcpy(petnet_settings.tz, "UTC");
         strcpy(petnet_settings.api_key, API_KEY);
@@ -785,12 +825,14 @@ void app_main(void) {
     blue_led.delay = 1000;
     blue_led.state = 0;
     red_led.io_num = RED_LED;
-    red_led.delay = 700;
+    red_led.delay = 500;
     red_led.state = 0;
     green_led.io_num = GREEN_LED;
     green_led.delay = 350;
     green_led.state = 0;
 
+    red_blinky = false;
+    green_blinky = false;
     wifi_info.state = false;
 
     gpio_set_level(GREEN_LED, 1);
@@ -907,8 +949,8 @@ void app_main(void) {
     print_heap_size("");
 
     gpio_set_level(GREEN_LED, 1);
-    // xTaskCreate(blinky_task, "blink_task", 1024, &green_led, 10, NULL);
-    // xTaskCreate(blinky_task, "blink_task", 1024, &red_led, 10, NULL);
+    xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
+    xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
 
     xTaskCreate(task_manager, "task_manager", 10240, NULL, 10, NULL);
     print_heap_size("");

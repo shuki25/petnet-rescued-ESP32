@@ -25,6 +25,7 @@ typedef struct {
     char api_key[48];
     char device_key[48];
     char secret[16];
+    char firmware_version[8];
     time_t datetime_registered;
     time_t datetime_last_boot;
     uint8_t is_registered;
@@ -40,7 +41,7 @@ extern petnet_rescued_settings_t petnet_settings;
 extern feeding_schedule_t *feeding_schedule;
 extern uint8_t num_feeding_times;
 extern bool get_next_meal_slot;
-
+extern uint8_t red_blinky, green_blinky;
 void dispense_food(uint8_t encoder_ticks);
 
 #endif
