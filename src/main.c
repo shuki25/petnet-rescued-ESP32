@@ -276,6 +276,13 @@ static bool initialize() {
     ESP_LOGD(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
     free(content);
 
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_app_desc_t running_app_info;
+    if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK) {
+        ESP_LOGI(TAG, "Running firmware version: %s", running_app_info.version);
+    }
+    save_settings_to_nvs();
+
     return true;
 }
 
@@ -306,11 +313,11 @@ static void green_blinky_task(void *data) {
     ESP_LOGI(TAG, "blinky_task: gpio: %d active_state: %d", led.io_num, green_blinky);
 
     while(true) {
+        vTaskDelay(led.delay / portTICK_PERIOD_MS);
         if(previous_state != green_blinky) {
             ESP_LOGI(TAG, "blinky_task state changed. active_state: %d", green_blinky);
             previous_state = green_blinky;
         }
-        vTaskDelay(led.delay / portTICK_PERIOD_MS);
         if(green_blinky == 1) {    
             led.state = !led.state;
             gpio_set_level(led.io_num, led.state);
