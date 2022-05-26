@@ -19,6 +19,9 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "esp_flash_partitions.h"
+#include "esp_partition.h"
+#include "esp_ota_ops.h"
 
 #include "config.h"
 #include "sdkconfig.h"
@@ -32,6 +35,7 @@
 #include "battery.h"
 #include "event.h"
 #include "logging.h"
+#include "ota_update.h"
 
 
 static const char *TAG = "main.c";
@@ -46,7 +50,6 @@ static input_state_t food_detect_state;
 static input_state_t power_state;
 static wifi_info_t wifi_info;
 petnet_rescued_settings_t petnet_settings;
-static nvs_handle eeprom_handle;
 
 int i2c_master_port = 0;
 i2c_config_t i2c_config;
@@ -137,6 +140,27 @@ void ntp_callback(struct timeval *tv) {
     }
 }
 
+
+esp_err_t save_settings_to_nvs() {
+    size_t nvs_size;
+
+    nvs_handle_t eeprom_handle;
+
+    ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
+    esp_err_t rs = nvs_set_blob(eeprom_handle, "settings", &petnet_settings, sizeof(petnet_rescued_settings_t));
+    
+    if (rs == ESP_OK) {
+        ESP_ERROR_CHECK(nvs_commit(eeprom_handle));
+        ESP_LOGI(TAG, "Settings saved to NVS.");
+    } else {
+        ESP_LOGI(TAG, "Settings not saved to NVS. Error: %s", esp_err_to_name(rs));
+    }
+    
+    nvs_close(eeprom_handle);
+    return rs;
+}
+
+
 void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *response) {
     // clear buffer and payload struct
     if (payload->string != NULL) {
@@ -151,7 +175,7 @@ void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *re
     memset(payload, 0, sizeof(nextion_payload_t));
 }
 
-static void initialize() {
+static bool initialize() {
     char *content, *value, *endpoint;
     uint8_t length, status = (uint8_t)404, status_code = (uint8_t)500;
     cJSON *payload, *results;
@@ -220,10 +244,8 @@ static void initialize() {
     ESP_LOGD(TAG, "Content-length: %d - Hex Dump", strlen(content));
     ESP_LOG_BUFFER_HEXDUMP(TAG, content, strlen(content), ESP_LOG_DEBUG);
     
-    print_heap_size("After API call");
-    
     payload = cJSON_Parse(content);
-    print_heap_size("After cJSON_Parse");
+
     if (payload != NULL) {
         results = cJSON_GetObjectItem(payload, "results");
         value = fetch_json_value(results, "is_setup_done");
@@ -234,8 +256,6 @@ static void initialize() {
         if (value) {
             strcpy(petnet_settings.tz, value);
         }
-        value = fetch_json_value(results, "test");
-        ESP_LOGI(TAG, "test = '%s'", value ? value : "");
         ESP_LOGI(TAG, "is_setup_done = %d, tz = %s", petnet_settings.is_setup_done, petnet_settings.tz);
     } else {
         ESP_LOGI(TAG, "Error with JSON");
@@ -251,6 +271,8 @@ static void initialize() {
     feeding_schedule_init(content, &feeding_schedule, &num_feeding_times);
     ESP_LOGD(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
     free(content);
+
+    return true;
 }
 
 static void blinky_task(void *data) {
@@ -349,7 +371,7 @@ void task_manager() {
     char heartbeat_data[TX_BUFFER_SIZE];
     char *api_content;
     uart_event_t uart_event;
-    uint16_t loop_counter = 1;
+    uint16_t loop_counter = 1, event_code;
     bool is_display_sleeping;
     bool has_feeding_slot = false;
     float temp_reading, battery_soc, battery_voltage, battery_crate;
@@ -468,7 +490,12 @@ void task_manager() {
                         event_payload = cJSON_GetObjectItem(json_payload, "event");
                         if (cJSON_IsObject(event_payload)) {
                             ESP_LOGI(TAG, "Calling event handler");
-                            process_event(event_payload);
+                            event_code = process_event(event_payload);
+                            ESP_LOGI(TAG, "Event Processed. Code: %d", event_code);
+                            if (event_code == SMART_FEEDER_EVENT_SETTINGS_CHANGE) {
+                                ESP_LOGI(TAG, "Saving settings to NVS.");
+                                save_settings_to_nvs();
+                            }
                         }
                     }
                 }
@@ -636,19 +663,39 @@ void task_manager() {
 }
 
 void app_main(void) {
-    heap_size_start = esp_get_free_heap_size();
-    print_heap_size("Initial Boot");
     size_t nvs_size;
-
-    // Delay to allow boot up to stablize
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    nvs_handle_t eeprom_handle;
     srand(rand() % 1000);
+    
+    uint8_t sha_256[HASH_LEN] = { 0 };
+    esp_partition_t partition;
+
+    // get sha256 digest for the partition table
+    partition.address   = ESP_PARTITION_TABLE_OFFSET;
+    partition.size      = ESP_PARTITION_TABLE_MAX_LEN;
+    partition.type      = ESP_PARTITION_TYPE_DATA;
+    esp_partition_get_sha256(&partition, sha_256);
+    print_sha256(sha_256, "SHA-256 for the partition table: ");
+
+    // get sha256 digest for bootloader
+    partition.address   = ESP_BOOTLOADER_OFFSET;
+    partition.size      = ESP_PARTITION_TABLE_OFFSET;
+    partition.type      = ESP_PARTITION_TYPE_APP;
+    esp_partition_get_sha256(&partition, sha_256);
+    print_sha256(sha_256, "SHA-256 for bootloader: ");
+
+    // get sha256 digest for running partition
+    esp_partition_get_sha256(esp_ota_get_running_partition(), sha_256);
+    print_sha256(sha_256, "SHA-256 for current firmware: ");
+
+    ESP_LOGI(TAG, "This is the new firmware version.");
 
     // Initialize NVS partiton
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        /* NVS partition was truncated
-         * and needs to be erased */
+        // OTA app partition table has a smaller NVS partition size than the non-OTA
+        // partition table. This size mismatch may cause NVS initialization to fail.
+        // If this happens, we erase NVS partition and initialize NVS again.
         ESP_ERROR_CHECK(nvs_flash_erase());
 
         /* Retry nvs_flash_init */
@@ -677,12 +724,15 @@ void app_main(void) {
         secret_generator(petnet_settings.secret, sizeof(petnet_settings.secret));
         petnet_settings.is_24h_mode = false;
         ESP_ERROR_CHECK(nvs_set_blob(eeprom_handle, "settings", &petnet_settings, sizeof(petnet_rescued_settings_t)));
+        ESP_ERROR_CHECK(nvs_commit(eeprom_handle));
         ESP_LOGI(TAG, "New settings was created and saved to NVS");
         break;
     
     default:
         break;
     }
+
+    nvs_close(eeprom_handle);
 
     ESP_LOGI(TAG, "device id: %s, tz: %s, api: %s, secret: %s, 24h: %d", petnet_settings.device_id, petnet_settings.tz,
         petnet_settings.api_key, petnet_settings.secret ,petnet_settings.is_24h_mode);
@@ -809,9 +859,22 @@ void app_main(void) {
         ESP_LOGI(TAG, "WiFi Connected. AP MAC ID:" MACSTR "", MAC2STR(wifi_info.ap_info.bssid));
         ESP_LOGI(TAG, "Station IP:" IPSTR " MAC ID:" MACSTR "", IP2STR(&wifi_info.netif_info.ip), MAC2STR(wifi_info.mac));
     }
-    
-    print_heap_size("After Wifi Connection");
-    initialize();
+
+    bool diagnostic_is_ok = initialize();
+
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+            if (diagnostic_is_ok) {
+                ESP_LOGI(TAG, "Diagnostics completed successfully! Continuing execution ...");
+                esp_ota_mark_app_valid_cancel_rollback();
+            } else {
+                ESP_LOGE(TAG, "Diagnostics failed! Start rollback to the previous version ...");
+                esp_ota_mark_app_invalid_rollback_and_reboot();
+            }
+        }
+    }
 
     // Set up Semahpore Mutex
     nextion_mutex = xSemaphoreCreateMutex();

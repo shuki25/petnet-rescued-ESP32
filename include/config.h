@@ -54,6 +54,9 @@
 // #define API_BASE_URL    "http://192.168.2.118:8111/api"
 // #define API_BASE_URL    "https://7453-24-59-154-128.ngrok.io/api"
 #define API_BASE_URL    "https://smartpetfeeder.net/api"
+#define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-2g-current.bin"
+
+#define HASH_LEN 32
 
 #ifndef WIFI_SSID
 #define WIFI_SSID       CONFIG_ESP_WIFI_SSID
