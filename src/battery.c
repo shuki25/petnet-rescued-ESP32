@@ -74,6 +74,20 @@ void get_battery_reading(float *voltage, float *soc_percent, float *crate) {
     free(fuel_gauge_buf);
 }
 
+void reset_fuel_gauge() {
+    i2c_port_t i2c_master_port = I2C_MASTER_NUM;
+    uint8_t fuel_gauge_buf[2];
+    fuel_gauge_buf[0] = 0x40;
+    fuel_gauge_buf[1] = 0x00;
+    ESP_LOG_BUFFER_HEXDUMP(TAG, fuel_gauge_buf, 2, ESP_LOG_INFO);
+    esp_err_t ret = i2c_master_write_word_register(i2c_master_port, MAX1704X_REGISTER_MODE, fuel_gauge_buf);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "MAX17048 Reset (Quickstart)");
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        ESP_LOGI(TAG, "I2C timed out.");
+    }
+}
+
 esp_err_t __attribute__((unused)) i2c_master_read_register(i2c_port_t i2c_num, uint8_t memory_addr, uint8_t *data_rd, size_t size) {
     if (size == 0) {
         return ESP_OK;
@@ -93,4 +107,17 @@ esp_err_t __attribute__((unused)) i2c_master_read_register(i2c_port_t i2c_num, u
     i2c_cmd_link_delete(cmd);
     return ret;
 
+}
+
+esp_err_t __attribute__((unused)) i2c_master_write_word_register(i2c_port_t i2c_num, uint8_t memory_addr, uint8_t *data_wr) {
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (MAX1704X_I2C_SLAVE_ADDR << 1) | WRITE_BIT, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, memory_addr, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, data_wr[0], ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, data_wr[1], ACK_CHECK_EN);
+    i2c_master_stop(cmd);
+    esp_err_t ret = i2c_master_cmd_begin(i2c_num, cmd, 1000 / portTICK_RATE_MS);
+    i2c_cmd_link_delete(cmd);
+    return ret;
 }

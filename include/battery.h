@@ -33,7 +33,8 @@
 
 
 void get_battery_reading(float *voltage, float *soc_percent, float *crate);
+void reset_fuel_gauge();
 
 esp_err_t __attribute__((unused)) i2c_master_read_register(i2c_port_t i2c_num, uint8_t memory_addr, uint8_t *data_rd, size_t size);
-
+esp_err_t __attribute__((unused)) i2c_master_write_word_register(i2c_port_t i2c_num, uint8_t memory_addr, uint8_t *data_wr);
 #endif
