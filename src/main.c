@@ -281,6 +281,7 @@ static bool initialize() {
     if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK) {
         ESP_LOGI(TAG, "Running firmware version: %s", running_app_info.version);
     }
+    strcpy(petnet_settings.firmware_version, running_app_info.version);
     save_settings_to_nvs();
 
     return true;
@@ -867,6 +868,7 @@ void app_main(void) {
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "i2c version register read ok");
         ESP_LOG_BUFFER_HEXDUMP(TAG, fuel_gauge_buf, 2, ESP_LOG_INFO);
+        reset_fuel_gauge();
     } else if (ret == ESP_ERR_TIMEOUT) {
         ESP_LOGI(TAG, "I2C timed out.");
     } else {
@@ -940,7 +942,6 @@ void app_main(void) {
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, RX_BUFFER_SIZE, TX_BUFFER_SIZE, 20, &uart_queue, 0));
     uart_enable_pattern_det_baud_intr(UART_NUM_1, EOL_PATTERN_CHAR, PATTERN_LEN, 9, 0, 0);
     uart_pattern_queue_reset(UART_NUM_1, 20);
-    
 
     // Create a queue to handle isr event
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
@@ -953,14 +954,11 @@ void app_main(void) {
     gpio_isr_handler_add(BUTTON, gpio_isr_handler, (void *) BUTTON);
     gpio_isr_handler_add(POWER_SNSR, gpio_isr_handler, (void *) POWER_SNSR);
 
-    print_heap_size("");
-
     gpio_set_level(GREEN_LED, 1);
     xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
     xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
 
-    xTaskCreate(task_manager, "task_manager", 10240, NULL, 10, NULL);
-    print_heap_size("");
+    xTaskCreate(task_manager, "task_manager", 12288, NULL, 10, NULL);
 
     while(true) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
