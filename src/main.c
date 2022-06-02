@@ -303,7 +303,7 @@ static void red_blinky_task(void *data) {
             gpio_set_level(led.io_num, led.state);
         }
         else {
-            gpio_set_level(led.io_num, 1);
+            gpio_set_level(led.io_num, LED_OFF);
         }
     }
 }
@@ -324,7 +324,7 @@ static void green_blinky_task(void *data) {
             gpio_set_level(led.io_num, led.state);
         }
         else {
-            gpio_set_level(led.io_num, 1);
+            gpio_set_level(led.io_num, LED_OFF);
         }
     }
 }
@@ -340,11 +340,11 @@ static void wifi_led(void *data) {
                 gpio_set_level(led.io_num, led.state);
                 vTaskDelay((loop_delay/4) / portTICK_PERIOD_MS);
             }
-            gpio_set_level(led.io_num, 1);
+            gpio_set_level(led.io_num, LED_OFF);
             vTaskDelay((loop_delay) / portTICK_PERIOD_MS);
         }
         else {
-            gpio_set_level(led.io_num, 1);
+            gpio_set_level(led.io_num, LED_OFF);
             vTaskDelay(loop_delay / portTICK_PERIOD_MS);
         }
 
@@ -730,7 +730,7 @@ void app_main(void) {
     esp_partition_get_sha256(esp_ota_get_running_partition(), sha_256);
     print_sha256(sha_256, "SHA-256 for current firmware: ");
 
-    ESP_LOGI(TAG, "This is the new firmware version.");
+    ESP_LOGI(TAG, "Firmware Platform: %s", CONTROL_BOARD_REVISION);
 
     // Initialize NVS partiton
     esp_err_t ret = nvs_flash_init();
@@ -843,8 +843,8 @@ void app_main(void) {
     green_blinky = false;
     wifi_info.state = false;
 
-    gpio_set_level(GREEN_LED, 1);
-    gpio_set_level(RED_LED, 1);
+    gpio_set_level(GREEN_LED, LED_OFF);
+    gpio_set_level(RED_LED, LED_OFF);
 
     // Set up I2C
     i2c_port_t i2c_master_port = I2C_MASTER_NUM;
@@ -896,13 +896,13 @@ void app_main(void) {
     if(gpio_get_level(BUTTON) == 0) {
         ESP_LOGI(TAG, "Button is pressed down on boot.");
         force_reprovisioning = true;
-        gpio_set_level(RED_LED, 0);
+        gpio_set_level(RED_LED, LED_ON);
     }
 
     ESP_LOGI(TAG, "Starting WiFi Provisioning");
     esp_err_t err = wifi_provisioning(&wifi_info);
-    gpio_set_level(RED_LED, 1);
-    gpio_set_level(GREEN_LED, 0);
+    gpio_set_level(RED_LED, LED_OFF);
+    gpio_set_level(GREEN_LED, LED_ON);
 
     ESP_LOGI(TAG, "WiFi Provisioning Completed");
 
@@ -954,7 +954,7 @@ void app_main(void) {
     gpio_isr_handler_add(BUTTON, gpio_isr_handler, (void *) BUTTON);
     gpio_isr_handler_add(POWER_SNSR, gpio_isr_handler, (void *) POWER_SNSR);
 
-    gpio_set_level(GREEN_LED, 1);
+    gpio_set_level(GREEN_LED, LED_OFF);
     xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
     xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
 

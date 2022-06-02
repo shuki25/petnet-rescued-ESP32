@@ -57,12 +57,21 @@
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-2g-current.bin"
 
 #define HASH_LEN 32
-#define CONTROL_BOARD_REVISION   "C-2g"
 
 #ifndef WIFI_SSID
 #define WIFI_SSID       CONFIG_ESP_WIFI_SSID
 #define WIFI_PASS       CONFIG_ESP_WIFI_PASSWORD
 #define WIFI_MAX_RETRY  CONFIG_ESP_MAXIMUM_RETRY
+#endif
+
+#ifdef GEN1
+#define LED_ON  1
+#define LED_OFF 0
+#define CONTROL_BOARD_REVISION   "C-1g"
+#else
+#define LED_ON  0
+#define LED_OFF 1
+#define CONTROL_BOARD_REVISION   "C-2g"
 #endif
 
 extern i2c_config_t i2c_config;
