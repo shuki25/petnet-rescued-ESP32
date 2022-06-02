@@ -54,7 +54,6 @@
 // #define API_BASE_URL    "http://192.168.2.118:8111/api"
 // #define API_BASE_URL    "https://7453-24-59-154-128.ngrok.io/api"
 #define API_BASE_URL    "https://smartpetfeeder.net/api"
-#define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-2g-current.bin"
 
 #define HASH_LEN 32
 
@@ -68,10 +67,13 @@
 #define LED_ON  1
 #define LED_OFF 0
 #define CONTROL_BOARD_REVISION   "C-1g"
+#define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-1g-current.bin"
+
 #else
 #define LED_ON  0
 #define LED_OFF 1
 #define CONTROL_BOARD_REVISION   "C-2g"
+#define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-2g-current.bin"
 #endif
 
 extern i2c_config_t i2c_config;
