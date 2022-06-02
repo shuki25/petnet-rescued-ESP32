@@ -516,8 +516,8 @@ void task_manager() {
 
         if (loop_counter % 20 == 0) {
             get_battery_reading(&battery_voltage, &battery_soc, &battery_crate);
-            sprintf(heartbeat_data, "{\"battery_soc\": %.2f, \"battery_voltage\": %.2f, \"battery_crate\":%.2f, \"on_power\": %d, \"control_board_revision\": \"%s\", \"firmware_version\": \"%s\"}", 
-                battery_soc, battery_voltage, battery_crate ,!power_state.state, CONTROL_BOARD_REVISION, petnet_settings.firmware_version);
+            sprintf(heartbeat_data, "{\"battery_soc\": %.2f, \"battery_voltage\": %.2f, \"battery_crate\":%.2f, \"on_power\": %d, \"control_board_revision\": \"%s\", \"firmware_version\": \"%s\", \"is_hopper_low\": %d }", 
+                battery_soc, battery_voltage, battery_crate ,!power_state.state, CONTROL_BOARD_REVISION, petnet_settings.firmware_version, food_detect_state.state);
             status_code = api_post(&api_content, petnet_settings.api_key, petnet_settings.device_key, "/device/heartbeat/", heartbeat_data);
             if (status_code == 200) {
                 json_payload = cJSON_Parse(api_content);
