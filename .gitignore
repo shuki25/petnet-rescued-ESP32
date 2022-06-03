@@ -6,3 +6,4 @@
 .vscode/settings.json
 *.old
 sdkconfig.esp32dev
+platformio.ini
