@@ -16,6 +16,7 @@
 #include "esp_sntp.h"
 #include "esp_system.h"
 #include "esp_event.h"
+// #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -54,7 +55,7 @@ petnet_rescued_settings_t petnet_settings;
 int i2c_master_port = 0;
 i2c_config_t i2c_config;
 
-static bool is_nextion_available = false;
+bool is_nextion_available = false;
 
 int heap_size_start, heap_size_end;
 bool is_clock_set = false;
@@ -165,31 +166,53 @@ esp_err_t save_settings_to_nvs() {
 }
 
 
-void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *response) {
-    // clear buffer and payload struct
-    if (payload->string != NULL) {
-        free(payload->string);
-    }
-    if (response->string != NULL) {
-        free(response->string);
-    }
+// void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *response) {
+//     // clear buffer and payload struct
+//     if (payload->string != NULL) {
+//         free(payload->string);
+//     }
+//     if (response->string != NULL) {
+//         free(response->string);
+//     }
 
-    memset(buffer, 0, RX_BUFFER_SIZE);
-    memset(response, 0, sizeof(nextion_response_t));
-    memset(payload, 0, sizeof(nextion_payload_t));
-}
+//     memset(buffer, 0, RX_BUFFER_SIZE);
+//     memset(response, 0, sizeof(nextion_response_t));
+//     memset(payload, 0, sizeof(nextion_payload_t));
+// }
 
 static bool initialize() {
     char *content, *value, *endpoint;
     uint8_t length, status = (uint8_t)404, status_code = (uint8_t)500;
     cJSON *payload, *results;
+    char buffer[RX_BUFFER_SIZE];
+    nextion_response_t nextion_response;
+    nextion_payload_t nextion_payload;
+    bool is_registered = false, nextion_setup_page = false;
+
+    memset(buffer, 0, RX_BUFFER_SIZE);
+    memset(&nextion_payload, 0, sizeof(nextion_payload_t));
+    memset(&nextion_response, 0, sizeof(nextion_response_t));
+
+    // reset_data(buffer, &nextion_payload, &nextion_response);
+
+    // Send Device ID and Activation Code to nextion
+    if (is_nextion_available) {
+        nextion_payload.string = malloc(sizeof(char) * strlen(petnet_settings.device_id) + 1);
+        strcpy((char *)nextion_payload.string, petnet_settings.device_id);
+        set_value(UART_NUM_1, "page8.device_id.txt", &nextion_payload, &nextion_response);
+        reset_data(buffer, &nextion_payload, &nextion_response);
+        nextion_payload.string = malloc(sizeof(char) * strlen(petnet_settings.secret) + 1);
+        strcpy((char *)nextion_payload.string, petnet_settings.secret);
+        set_value(UART_NUM_1, "page8.activate_code.txt", &nextion_payload, &nextion_response);
+        reset_data(buffer, &nextion_payload, &nextion_response);
+    }
 
     // Check if the device is registered
 
     length = 20 + strlen(petnet_settings.device_id) + strlen(petnet_settings.secret);
     endpoint = malloc(sizeof(char) * length+1);
 
-    while(status != 200) {
+    while(!is_registered) {
         
         sprintf(endpoint, "/device/verify/%s/%s/", petnet_settings.device_id, petnet_settings.secret);
         status_code = api_get(&content, "", "", endpoint);
@@ -226,12 +249,18 @@ static bool initialize() {
                 } else {
                     petnet_settings.device_key[0] = 0x00;
                 }
-
+                is_registered = true;
                 ESP_LOGI(TAG, "Device is registered. Receiving information from server.");
             }
             else {
+                green_blinky = true;
                 ESP_LOGI(TAG, "Device is not registered yet. Please register the device using the QRCODE provided with the control board.");
                 vTaskDelay(10000 / portTICK_PERIOD_MS);
+                if (!nextion_setup_page) {
+                    nextion_setup_page = true;
+                    send_command(UART_NUM_1, "page page8", &nextion_response);
+                    reset_data(buffer, &nextion_payload, &nextion_response);
+                }
             }
             cJSON_Delete(payload);
         }
@@ -241,6 +270,9 @@ static bool initialize() {
         free(content);
     }
     free(endpoint);
+    green_blinky = false;
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    gpio_set_level(GREEN_LED, LED_ON);
 
     // Get settings
     api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/settings/");
@@ -290,6 +322,7 @@ static bool initialize() {
 static void red_blinky_task(void *data) {
     led_config_t led = *(led_config_t *) data;
     uint8_t previous_state = red_blinky;
+    uint8_t is_state_off = true;
     ESP_LOGI(TAG, "blinky_task: gpio: %d active_state: %d", led.io_num, red_blinky);
 
     while(true) {
@@ -299,10 +332,12 @@ static void red_blinky_task(void *data) {
         }
         vTaskDelay(led.delay / portTICK_PERIOD_MS);
         if(red_blinky == 1) {    
+            is_state_off = false;
             led.state = !led.state;
             gpio_set_level(led.io_num, led.state);
         }
-        else {
+        else if (!is_state_off && green_blinky == 0) {
+            is_state_off = true;
             gpio_set_level(led.io_num, LED_OFF);
         }
     }
@@ -311,6 +346,7 @@ static void red_blinky_task(void *data) {
 static void green_blinky_task(void *data) {
     led_config_t led = *(led_config_t *) data;
     uint8_t previous_state = green_blinky;
+    uint8_t is_state_off = true;
     ESP_LOGI(TAG, "blinky_task: gpio: %d active_state: %d", led.io_num, green_blinky);
 
     while(true) {
@@ -320,10 +356,12 @@ static void green_blinky_task(void *data) {
             previous_state = green_blinky;
         }
         if(green_blinky == 1) {    
+            is_state_off = false;
             led.state = !led.state;
             gpio_set_level(led.io_num, led.state);
         }
-        else {
+        else if (!is_state_off && green_blinky == 0) {
+            is_state_off = true;
             gpio_set_level(led.io_num, LED_OFF);
         }
     }
@@ -425,31 +463,17 @@ void task_manager() {
     uint8_t wifi_connect = 0xff;
     time_t next_feeding_slot, motor_timeout, current_time, time_diff;
     uint8_t next_feeding_index, status = (uint8_t)404;
+    uint8_t prev_food_state, prev_power_state;
     uint16_t status_code = (uint16_t)500;
     cJSON *json_payload, *results, *event_payload;
 
     motor_timeout = time(&motor_timeout);
+    prev_food_state = 0xff;
+    prev_power_state = 0xff;
 
     while(true) {
 
         current_time = time(&current_time);
-
-        // One time setup
-        if (loop_counter == 1) {
-            // send_command(UART_NUM_1, "bkcmd=3", &response);
-            payload.number=3;
-            payload.string=NULL;
-            if (set_value(UART_NUM_1, "bkcmd", &payload, &response) == NEXTION_OK) {
-                ESP_LOGI(TAG, "Set bkcmd to 3");
-                ESP_LOGI(TAG, "Nextion display is connected.");
-                is_nextion_available = true;
-            }
-            else {
-                ESP_LOGE(TAG, "setting value bkcmd=3 failed. Code: %0x", response.event_code);
-                ESP_LOGI(TAG, "Nextion display is not connected, continuing without the display.");
-                is_nextion_available = false;
-            }
-        }
 
         if (loop_counter == 2 && is_nextion_available) {
             send_command(UART_NUM_1, "page page1", &response);
@@ -514,6 +538,28 @@ void task_manager() {
             }
         }
 
+        if (loop_counter > 10 && is_nextion_available && prev_food_state != food_detect_state.state) {
+            prev_food_state = food_detect_state.state;
+            reset_data(buffer, &payload, &response);
+            payload.number = (uint32_t)food_detect_state.state;
+            ESP_LOGI(TAG, "set_value: %d", payload.number);
+
+            if (set_value(UART_NUM_1, "page0.flag_hopper.val", &payload, &response) == NEXTION_FAIL) {
+                ESP_LOGW(TAG, "Invalid Variable: %s", "page0.flag_hopper.val");
+            } 
+        }
+
+         if (loop_counter > 10 && is_nextion_available && prev_power_state != power_state.state) {
+            prev_power_state = power_state.state;
+            reset_data(buffer, &payload, &response);
+            payload.number = !(uint32_t)power_state.state;
+            ESP_LOGI(TAG, "set_value: %d", payload.number);
+
+            if (set_value(UART_NUM_1, "page0.flag_charging.val", &payload, &response) == NEXTION_FAIL) {
+                ESP_LOGW(TAG, "Invalid Variable: %s", "page0.flag_charging.val");
+            } 
+        }
+
         if (loop_counter % 20 == 0) {
             get_battery_reading(&battery_voltage, &battery_soc, &battery_crate);
             sprintf(heartbeat_data, "{\"battery_soc\": %.2f, \"battery_voltage\": %.2f, \"battery_crate\":%.2f, \"on_power\": %d, \"control_board_revision\": \"%s\", \"firmware_version\": \"%s\", \"is_hopper_low\": %d }", 
@@ -548,6 +594,12 @@ void task_manager() {
                 }
                 cJSON_Delete(json_payload);
             }
+            else if (status_code == 403)
+            {
+               ESP_LOGI(TAG, "Authentication failed. Restarting.");
+               esp_restart();
+            }
+            
             else {
                 ESP_LOGI(TAG, "Server error. Status code: %d ", status_code);
             }
@@ -911,22 +963,6 @@ void app_main(void) {
         ESP_LOGI(TAG, "Station IP:" IPSTR " MAC ID:" MACSTR "", IP2STR(&wifi_info.netif_info.ip), MAC2STR(wifi_info.mac));
     }
 
-    bool diagnostic_is_ok = initialize();
-
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    esp_ota_img_states_t ota_state;
-    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
-        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
-            if (diagnostic_is_ok) {
-                ESP_LOGI(TAG, "Diagnostics completed successfully! Continuing execution ...");
-                esp_ota_mark_app_valid_cancel_rollback();
-            } else {
-                ESP_LOGE(TAG, "Diagnostics failed! Start rollback to the previous version ...");
-                esp_ota_mark_app_invalid_rollback_and_reboot();
-            }
-        }
-    }
-
     // Set up Semahpore Mutex
     nextion_mutex = xSemaphoreCreateMutex();
     if (nextion_mutex != NULL) {
@@ -943,6 +979,31 @@ void app_main(void) {
     uart_enable_pattern_det_baud_intr(UART_NUM_1, EOL_PATTERN_CHAR, PATTERN_LEN, 9, 0, 0);
     uart_pattern_queue_reset(UART_NUM_1, 20);
 
+    if (initialize_nextion_connection(UART_NUM_1) == NEXTION_OK) {
+        is_nextion_available = true;
+    }
+    else {
+        is_nextion_available = false;
+    }
+
+    xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
+    xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
+    bool diagnostic_is_ok = initialize();
+
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+            if (diagnostic_is_ok) {
+                ESP_LOGI(TAG, "Diagnostics completed successfully! Continuing execution ...");
+                esp_ota_mark_app_valid_cancel_rollback();
+            } else {
+                ESP_LOGE(TAG, "Diagnostics failed! Start rollback to the previous version ...");
+                esp_ota_mark_app_invalid_rollback_and_reboot();
+            }
+        }
+    }
+
     // Create a queue to handle isr event
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     xTaskCreate(gpio_task_handler, "gpio_task_handler", 4096, NULL, 10, NULL);
@@ -955,8 +1016,8 @@ void app_main(void) {
     gpio_isr_handler_add(POWER_SNSR, gpio_isr_handler, (void *) POWER_SNSR);
 
     gpio_set_level(GREEN_LED, LED_OFF);
-    xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
-    xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
+    // xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
+    // xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
 
     xTaskCreate(task_manager, "task_manager", 12288, NULL, 10, NULL);
 

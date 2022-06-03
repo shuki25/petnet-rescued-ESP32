@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "driver/uart.h"
 #include "esp_http_client.h"
 #include "esp_flash_partitions.h"
 #include "esp_partition.h"
@@ -12,6 +13,7 @@
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "errno.h"
+#include "nextion.h"
 
 #include "api_client.h"
 #include "config.h"
@@ -61,6 +63,13 @@ void ota_update_task()
     /* update handle : set by esp_ota_begin(), must be freed via esp_ota_end() */
     esp_ota_handle_t update_handle = 0 ;
     const esp_partition_t *update_partition = NULL;
+    char buffer[RX_BUFFER_SIZE];
+    nextion_response_t nextion_response;
+    nextion_payload_t nextion_payload;
+
+    memset(buffer, 0, RX_BUFFER_SIZE);
+    memset(&nextion_payload, 0, sizeof(nextion_payload_t));
+    memset(&nextion_response, 0, sizeof(nextion_response_t));
 
     ESP_LOGI(TAG, "Starting OTA update");
 
@@ -147,6 +156,11 @@ void ota_update_task()
 
                     image_header_was_checked = true;
 
+                    if (is_nextion_available) {
+                        send_command(UART_NUM_1, "page page10", &nextion_response);
+                        reset_data(buffer, &nextion_payload, &nextion_response);
+                    }
+                    
                     err = esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &update_handle);
                     if (err != ESP_OK) {
                         ESP_LOGE(TAG, "esp_ota_begin failed (%s)", esp_err_to_name(err));
@@ -210,7 +224,11 @@ void ota_update_task()
         task_fatal_error();
     }
     ESP_LOGI(TAG, "Prepare to restart system!");
-    gpio_set_level(GREEN_LED, 0);
+    if (is_nextion_available) {
+        send_command(UART_NUM_1, "page page0", &nextion_response);
+        reset_data(buffer, &nextion_payload, &nextion_response);
+    }
+    gpio_set_level(GREEN_LED, LED_ON);
     vTaskDelay(3000 / portTICK_PERIOD_MS);
     esp_restart();
 }

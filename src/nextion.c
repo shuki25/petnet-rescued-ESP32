@@ -398,3 +398,40 @@ nextion_err_t sync_nextion_clock(uart_port_t uart_port, struct tm *timeinfo) {
 
     return NEXTION_OK;
 }
+
+void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *response) {
+    // clear buffer and payload struct
+    if (payload->string != NULL) {
+        free(payload->string);
+    }
+    if (response->string != NULL) {
+        free(response->string);
+    }
+
+    memset(buffer, 0, RX_BUFFER_SIZE);
+    memset(response, 0, sizeof(nextion_response_t));
+    memset(payload, 0, sizeof(nextion_payload_t));
+}
+
+nextion_err_t initialize_nextion_connection(uart_port_t uart_port) {
+    char buffer[RX_BUFFER_SIZE];
+    nextion_response_t response;
+    nextion_payload_t payload;
+    nextion_err_t status;
+
+    // send_command(UART_NUM_1, "bkcmd=3", &response);
+    payload.number=3;
+    payload.string=NULL;
+    status = set_value(uart_port, "bkcmd", &payload, &response);
+    if (status == NEXTION_OK) {
+        ESP_LOGI(TAG, "Set bkcmd to 3");
+        ESP_LOGI(TAG, "Nextion display is connected.");
+    }
+    else {
+        ESP_LOGE(TAG, "setting value bkcmd=3 failed. Code: %0x", response.event_code);
+        ESP_LOGI(TAG, "Nextion display is not connected, continuing without the display.");
+    }
+    reset_data(buffer, &payload, &response);
+
+    return status;
+}

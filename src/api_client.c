@@ -184,17 +184,14 @@ uint16_t api_post(char **content, char *auth_token, char *device_key, char *endp
     }
 
     err = esp_http_client_perform(client);
-
-    if (err == ESP_OK) {
-        status_code = esp_http_client_get_status_code(client);
-        ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
-        *content = data;
-        // ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
-        // ESP_LOGD(TAG, "*content:");
-        // ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
-    } else {
-        ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
-        *content = NULL;
+    status_code = esp_http_client_get_status_code(client);
+    ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
+    ESP_LOGI(TAG, "*content:");
+    *content = data;
+    ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_INFO);
+    
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
     }
     // ESP_LOG_BUFFER_HEX(TAG, content, strlen(content));
 

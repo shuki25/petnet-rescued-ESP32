@@ -73,5 +73,7 @@ uint8_t parse_event(uint8_t *event_packet, uint16_t packet_size, nextion_respons
 nextion_err_t get_value(uart_port_t uart_port, char *key, nextion_response_t *response);
 nextion_err_t set_value(uart_port_t uart_port, char *key, nextion_payload_t *payload, nextion_response_t *response);
 nextion_err_t sync_nextion_clock(uart_port_t uart_port, struct tm *timeinfo);
+void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *response);
+nextion_err_t initialize_nextion_connection(uart_port_t uart_port);
 
 #endif
