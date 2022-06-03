@@ -45,7 +45,7 @@ float get_temperature() {
 
 char *secret_generator(char *str, size_t size)
 {
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKMNOPQRSTUVWXYZ0123456789";
+    const char charset[] = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKMNOPQRSTUVWXYZ0123456789";
     if (size) {
         --size;
         for (size_t n = 0; n < size; n++) {
