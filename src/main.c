@@ -197,6 +197,10 @@ static bool initialize() {
 
     // Send Device ID and Activation Code to nextion
     if (is_nextion_available) {
+        nextion_payload.string = malloc(sizeof(char) * strlen(petnet_settings.firmware_version) + 1);
+        strcpy((char *)nextion_payload.string, petnet_settings.firmware_version);
+        set_value(UART_NUM_1, "page0.feeder_fw.txt", &nextion_payload, &nextion_response);
+        reset_data(buffer, &nextion_payload, &nextion_response);
         nextion_payload.string = malloc(sizeof(char) * strlen(petnet_settings.device_id) + 1);
         strcpy((char *)nextion_payload.string, petnet_settings.device_id);
         set_value(UART_NUM_1, "page8.device_id.txt", &nextion_payload, &nextion_response);
