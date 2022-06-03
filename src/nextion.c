@@ -133,6 +133,19 @@ nextion_err_t get_value(uart_port_t uart_port, char *key, nextion_response_t *re
     sprintf(prepared_command, "get %s%s", key, EOL);
     esp_err_t status = NEXTION_FAIL;
 
+    nextion_response_t tmp_response;
+    nextion_payload_t tmp_payload;
+
+    memset(incoming_msg, 0, RX_BUFFER_SIZE);
+    memset(&tmp_response, 0, sizeof(nextion_response_t));
+    memset(&tmp_payload, 0, sizeof(nextion_payload_t));
+    
+    // Wake up Nextion if it is sleeping
+    if (is_nextion_sleeping) {
+        send_command(UART_NUM_1, "sleep=0", &tmp_response);
+        reset_data(incoming_msg, &tmp_payload, &tmp_response);
+    }
+
     // Initialize Response
     if (response->string != NULL) {
         free(response->string);
@@ -212,6 +225,18 @@ nextion_err_t set_value(uart_port_t uart_port, char *key, nextion_payload_t *pay
     uart_event_t uart_event;
     char *prepared_command = NULL;
     uint8_t num_digits=0;
+    nextion_response_t tmp_response;
+    nextion_payload_t tmp_payload;
+
+    memset(incoming_msg, 0, RX_BUFFER_SIZE);
+    memset(&tmp_response, 0, sizeof(nextion_response_t));
+    memset(&tmp_payload, 0, sizeof(nextion_payload_t));
+
+    // Wake up Nextion if it is sleeping
+    if (is_nextion_sleeping) {
+        send_command(UART_NUM_1, "sleep=0", &tmp_response);
+        reset_data(incoming_msg, &tmp_payload, &tmp_response);
+    }
 
     // Initialize Response
     if (response->string != NULL) {
@@ -335,9 +360,11 @@ uint8_t parse_event(uint8_t *event_packet, uint16_t packet_size, nextion_respons
         break;
     case NEXTION_AUTO_SLEEP:
         ESP_LOGI(TAG, "Event triggered: NEXTION_AUTO_SLEEP");
+        is_nextion_sleeping = true;
         break;      
     case NEXTION_AUTO_WAKE:
         ESP_LOGI(TAG, "Event triggered: NEXTION_AUTO_WAKE");
+        is_nextion_sleeping = false;
         break;       
     case NEXTION_STARTUP:
         ESP_LOGI(TAG, "Event triggered: NEXTION_STARTUP");

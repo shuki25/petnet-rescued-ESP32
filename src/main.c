@@ -56,6 +56,7 @@ int i2c_master_port = 0;
 i2c_config_t i2c_config;
 
 bool is_nextion_available = false;
+bool is_nextion_sleeping = false;
 
 int heap_size_start, heap_size_end;
 bool is_clock_set = false;
@@ -309,7 +310,7 @@ static bool initialize() {
     ESP_LOG_BUFFER_HEXDUMP(TAG, content, strlen(content), ESP_LOG_DEBUG);
 
     feeding_schedule_init(content, &feeding_schedule, &num_feeding_times);
-    ESP_LOGD(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
+    ESP_LOGI(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
     free(content);
 
     const esp_partition_t *running = esp_ota_get_running_partition();
@@ -458,8 +459,7 @@ void task_manager() {
     char *api_content;
     uart_event_t uart_event;
     uint16_t loop_counter = 1, event_code;
-    bool is_display_sleeping;
-    bool has_feeding_slot = false;
+    bool has_feeding_slot = false, nextion_next_meal = false;
     float temp_reading, battery_soc, battery_voltage, battery_crate;
     nextion_response_t response;
     nextion_response_t response2;
@@ -527,7 +527,21 @@ void task_manager() {
                 }
                 has_feeding_slot = true;
                 get_next_meal_slot = false;
+                nextion_next_meal = false;
+            } else if (num_feeding_times == 0 && is_nextion_available && !nextion_next_meal) {
+                    sprintf(buffer, "No Scheduled Meals");
+                    payload.string = malloc(sizeof(char) * strlen(buffer) + 1);
+                    strcpy((char *)payload.string, buffer);
+                    set_value(UART_NUM_1, "page1.next_meal_name.txt", &payload, &response);
+                    reset_data(buffer, &payload, &response);
+                    sprintf(buffer, " ");
+                    payload.string = malloc(sizeof(char) * strlen(buffer) + 1);
+                    strcpy((char *)payload.string, buffer);
+                    set_value(UART_NUM_1, "page1.next_meal_desc.txt", &payload, &response);
+                    reset_data(buffer, &payload, &response);
+                    nextion_next_meal = true;
             }
+
         }
 
         if (loop_counter == 10 && is_nextion_available) {
@@ -641,8 +655,9 @@ void task_manager() {
                     strcpy((char *)payload.string, buffer);
                     ESP_LOGI(TAG, "set_value: %s", payload.string);
                     set_value(UART_NUM_1, "page6.meal_desc.txt", &payload, &response);
-
+                    reset_data(buffer, &payload, &response);
                     send_command(UART_NUM_1, "page page6", &response);
+                    reset_data(buffer, &payload, &response);
                 }
 
                 dispense_food(feeding_schedule[next_feeding_index].interrupter_count);
@@ -714,20 +729,13 @@ void task_manager() {
         {
         case NEXTION_TOUCH:
             ESP_LOGI(TAG, "NEXTION_TOUCH");
-            if (response.page == 1 && response.component == 20) {
-                temp_reading = get_temperature();
-                payload.string = malloc(sizeof(char) * 6);
-                sprintf((char *)payload.string, "%.1f", temp_reading);
-                set_value(UART_NUM_1, "page7.cpu_temp.txt", &payload, &response2);
-            } else if (response.page == 1 && response.component == 12) {
+            if (response.page == 1 && response.component == 12) {
                 dispense_food(16);
+                if (is_nextion_sleeping) {
+                        send_command(UART_NUM_1, "sleep=0", &response);
+                        reset_data(buffer, &payload, &response);
+                }
                 send_command(UART_NUM_1, "page page1", &response2);
-            }
-            else if (response.page == 1 && response.component == 27) { 
-                is_display_sleeping = true;
-            }            
-            else if (response.page == 14 && response.component == 0) { 
-                is_display_sleeping = false;
             }
             break;           
         case NEXTION_TOUCH_COORDINATE:
@@ -738,11 +746,11 @@ void task_manager() {
             break;  
         case NEXTION_AUTO_SLEEP:
             ESP_LOGI(TAG, "NEXTION_AUTO_SLEEP");
-            is_display_sleeping = true;
+            is_nextion_sleeping = true;
             break;      
         case NEXTION_AUTO_WAKE:
             ESP_LOGI(TAG, "NEXTION_AUTO_WAKE");
-            is_display_sleeping = false;
+            is_nextion_sleeping = false;
             break;       
         case NEXTION_STARTUP:
             ESP_LOGI(TAG, "NEXTION_STARTUP");
@@ -753,8 +761,7 @@ void task_manager() {
         }
 
         reset_data(incoming_msg, &payload, &response);
-        memset(&response2, 0, sizeof(nextion_response_t));
-
+        reset_data(incoming_msg, &payload, &response2);
         vTaskDelay(500 / portTICK_PERIOD_MS);
         loop_counter++;
     }

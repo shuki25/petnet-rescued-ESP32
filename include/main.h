@@ -43,6 +43,7 @@ extern uint8_t num_feeding_times;
 extern bool get_next_meal_slot;
 extern uint8_t red_blinky, green_blinky;
 extern bool is_nextion_available;
+extern bool is_nextion_sleeping;
 void dispense_food(uint8_t encoder_ticks);
 
 #endif
