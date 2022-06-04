@@ -183,7 +183,8 @@ esp_err_t save_settings_to_nvs() {
 
 static bool initialize() {
     char *content, *value, *endpoint;
-    uint8_t length, status = (uint8_t)404, status_code = (uint8_t)500;
+    uint8_t length;
+    uint16_t status_code = (uint16_t)500, status = (uint16_t)404;
     cJSON *payload, *results;
     char buffer[RX_BUFFER_SIZE];
     nextion_response_t nextion_response;

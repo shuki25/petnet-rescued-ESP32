@@ -446,6 +446,10 @@ nextion_err_t initialize_nextion_connection(uart_port_t uart_port) {
     nextion_payload_t payload;
     nextion_err_t status;
 
+    memset(buffer, 0, RX_BUFFER_SIZE);
+    memset(&response, 0, sizeof(nextion_response_t));
+    memset(&payload, 0, sizeof(nextion_payload_t));
+
     // send_command(UART_NUM_1, "bkcmd=3", &response);
     payload.number=3;
     payload.string=NULL;

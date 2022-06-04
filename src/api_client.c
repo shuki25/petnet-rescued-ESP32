@@ -186,9 +186,9 @@ uint16_t api_post(char **content, char *auth_token, char *device_key, char *endp
     err = esp_http_client_perform(client);
     status_code = esp_http_client_get_status_code(client);
     ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
-    ESP_LOGI(TAG, "*content:");
+    ESP_LOGD(TAG, "*content:");
     *content = data;
-    ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_INFO);
+    ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
     
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
