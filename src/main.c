@@ -23,6 +23,7 @@
 #include "esp_flash_partitions.h"
 #include "esp_partition.h"
 #include "esp_ota_ops.h"
+#include "esp_pm.h"
 
 #include "config.h"
 #include "sdkconfig.h"
@@ -845,6 +846,19 @@ void app_main(void) {
     }
 
     nvs_close(eeprom_handle);
+
+    // Configure dynamic frequency scaling:
+    // maximum and minimum frequencies are set in sdkconfig,
+    // automatic light sleep is enabled if tickless idle support is enabled.
+
+    esp_pm_config_esp32_t pm_config = {
+        .max_freq_mhz = CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ,
+        .min_freq_mhz = CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ,
+#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+            .light_sleep_enable = true
+#endif
+    };
+    ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
 
     ESP_LOGI(TAG, "device id: %s, tz: %s, api: %s, secret: %s, 24h: %d", petnet_settings.device_id, petnet_settings.tz,
         petnet_settings.api_key, petnet_settings.secret ,petnet_settings.is_24h_mode);
