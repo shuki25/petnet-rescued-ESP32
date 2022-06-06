@@ -97,7 +97,13 @@ uint16_t process_event(cJSON *event) {
                     }
                     value_string = fetch_json_value(rs, "tz_esp32");
                     if (value_string) {
-                        strcpy(petnet_settings.tz, value_string);
+                        ESP_LOGI(TAG, "Old timezone: %s", petnet_settings.tz); 
+                        ESP_LOGI(TAG, "Setting timezone to %s", value_string);
+                        if (strcmp(value_string, petnet_settings.tz) != 0) {
+                            ESP_LOGI(TAG, "Timezone changed, updating time");
+                            strcpy(petnet_settings.tz, value_string);
+                            tz_changed = true;
+                        }
                     }
                 } else {
                     ESP_LOGI(TAG, "Error with JSON");

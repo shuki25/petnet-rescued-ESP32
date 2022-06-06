@@ -64,6 +64,7 @@ bool is_clock_set = false;
 feeding_schedule_t *feeding_schedule;
 uint8_t num_feeding_times;
 bool get_next_meal_slot = true;
+bool tz_changed = false;
 uint8_t red_blinky, green_blinky;
 
 
@@ -77,7 +78,8 @@ static void gpio_task_handler(void *arg) {
     uint32_t io_num;
     uint8_t current_state;
     hopper_state.counter=0;
-    hopper_state.state=0;
+    // hopper_state.state=0;
+    hopper_state.state = gpio_get_level(MOTOR_SNSR);
     button_state.counter=0;
     button_state.state=1;
     uint8_t flag_wifi=wifi_info.state;
@@ -88,10 +90,11 @@ static void gpio_task_handler(void *arg) {
     while(true) {
         if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
             current_state = gpio_get_level(io_num);
+            ESP_LOGI(TAG, "current_state: %d", current_state);
             if(io_num == MOTOR_SNSR && current_state != hopper_state.state) {
                 hopper_state.counter++;
                 hopper_state.state = current_state;
-                printf("hopper_counter: %d\n", hopper_state.counter);
+                ESP_LOGI(TAG, "hopper_counter: %d", hopper_state.counter);
             }
             else if(io_num == HOPPER_SNSR && current_state != food_detect_state.state) {
                 food_detect_state.counter++;
@@ -102,7 +105,7 @@ static void gpio_task_handler(void *arg) {
                 gpio_set_level(BLUE_LED, !current_state);
                 if(current_state == 1) {
                     button_state.counter++;
-                    printf("button count: %d\n", button_state.counter);
+                    ESP_LOGI(TAG, "button count: %d\n", button_state.counter);
                     // print_heap_size("intsig");
                     // flag_wifi = !flag_wifi;
                     // wifi_info.state = flag_wifi;
@@ -145,6 +148,7 @@ void ntp_callback(struct timeval *tv) {
     if (is_nextion_available) {
         sync_nextion_clock(UART_NUM_1, timeinfo);
     }
+    tz_changed = false;
 }
 
 
@@ -504,6 +508,17 @@ void task_manager() {
             sntp_setservername(0, "pool.ntp.org");
             sntp_init();
             sntp_set_time_sync_notification_cb(ntp_callback);
+        }
+
+        if (tz_changed) {
+            ESP_LOGI(TAG, "Setting to Timezone: %s", petnet_settings.tz);
+            setenv("TZ", petnet_settings.tz, 1);
+            tzset();
+
+            if (is_nextion_available) {
+                sync_nextion_clock(UART_NUM_1, timeinfo);
+            }
+            tz_changed = false;
         }
 
         if (loop_counter % 10 == 0 && get_next_meal_slot) {
@@ -878,7 +893,11 @@ void app_main(void) {
  
     
     // Initialize GPIO input config
+#if DEV_BOARD
+    io_conf.intr_type = GPIO_INTR_ANYEDGE;
+#else
     io_conf.intr_type = GPIO_INTR_NEGEDGE;
+#endif
     io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pull_up_en = 1;
