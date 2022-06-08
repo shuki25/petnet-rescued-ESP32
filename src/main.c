@@ -82,7 +82,6 @@ static void gpio_task_handler(void *arg) {
     hopper_state.state = gpio_get_level(MOTOR_SNSR);
     button_state.counter=0;
     button_state.state=1;
-    uint8_t flag_wifi=wifi_info.state;
     power_state.state=gpio_get_level(POWER_SNSR);
     power_state.counter=0;
     food_detect_state.state = gpio_get_level(HOPPER_SNSR);
@@ -106,10 +105,6 @@ static void gpio_task_handler(void *arg) {
                 if(current_state == 1) {
                     button_state.counter++;
                     ESP_LOGI(TAG, "button count: %d\n", button_state.counter);
-                    // print_heap_size("intsig");
-                    // flag_wifi = !flag_wifi;
-                    // wifi_info.state = flag_wifi;
-                    // ESP_LOGI(TAG, "flag_wifi: %d", flag_wifi);
                     ESP_LOGI(TAG, "red_led - active: %d", red_blinky);
                     red_blinky = !red_blinky;
                 }
@@ -476,6 +471,7 @@ void task_manager() {
     uint8_t prev_food_state, prev_power_state;
     uint16_t status_code = (uint16_t)500;
     cJSON *json_payload, *results, *event_payload;
+    struct tm *timeinfo;
 
     motor_timeout = time(&motor_timeout);
     prev_food_state = 0xff;
@@ -514,6 +510,15 @@ void task_manager() {
             ESP_LOGI(TAG, "Setting to Timezone: %s", petnet_settings.tz);
             setenv("TZ", petnet_settings.tz, 1);
             tzset();
+
+            time_t now = time(&now);
+            struct tm *utc_timeinfo = gmtime(&now);
+            strftime(buffer, sizeof(buffer), "%A, %B %d %Y - %H:%M:%S ", utc_timeinfo);
+            ESP_LOGI(TAG, "Time in UTC: %s", buffer);
+
+            timeinfo = localtime(&now);
+            strftime(buffer, sizeof(buffer), "%A, %B %d %Y - %H:%M:%S ", timeinfo);
+            ESP_LOGI(TAG, "Time in %s: %s", petnet_settings.tz, buffer);
 
             if (is_nextion_available) {
                 sync_nextion_clock(UART_NUM_1, timeinfo);
@@ -862,6 +867,11 @@ void app_main(void) {
 
     nvs_close(eeprom_handle);
 
+    // Get number of used entries and free entries in the NVS partitions
+    nvs_stats_t nvs_stats;
+    nvs_get_stats(NULL, &nvs_stats);
+    ESP_LOGI(TAG, "Count: UsedEntries = (%d), FreeEntries = (%d), AllEntries = (%d)\n", nvs_stats.used_entries, nvs_stats.free_entries, nvs_stats.total_entries);
+
     // Configure dynamic frequency scaling:
     // maximum and minimum frequencies are set in sdkconfig,
     // automatic light sleep is enabled if tickless idle support is enabled.
@@ -893,11 +903,8 @@ void app_main(void) {
  
     
     // Initialize GPIO input config
-#if DEV_BOARD
+
     io_conf.intr_type = GPIO_INTR_ANYEDGE;
-#else
-    io_conf.intr_type = GPIO_INTR_NEGEDGE;
-#endif
     io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pull_up_en = 1;
@@ -980,21 +987,60 @@ void app_main(void) {
         .stop_bits = UART_STOP_BITS_1,      
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE 
     };
-    
-    vTaskDelay(200 / portTICK_PERIOD_MS);
 
-    xTaskCreate(wifi_led, "wifi_status_led", 1024, &blue_led, 10, NULL);
-    print_heap_size("Before Wifi Connection");
+    gpio_set_level(RED_LED, LED_OFF);
+    gpio_set_level(GREEN_LED, LED_OFF);
+
+    if(gpio_get_level(BUTTON) == 0) {
+        int count = 0;
+        ESP_LOGI(TAG, "Button is pressed down on boot.");
+        gpio_set_level(RED_LED, LED_ON);
+        while (gpio_get_level(BUTTON) == 0) {
+            vTaskDelay(100 / portTICK_PERIOD_MS);
+            count++;
+            if (count > 50) {
+                break;
+            }
+        }
+        if (count > 50) {
+            ESP_LOGI(TAG, "Button pressed for more than 5 seconds.");
+            ESP_LOGI(TAG, "Resetting to factory configuration");
+            gpio_set_level(RED_LED, LED_OFF);
+            vTaskDelay(300 / portTICK_PERIOD_MS);
+            gpio_set_level(RED_LED, LED_ON);
+            vTaskDelay(300 / portTICK_PERIOD_MS);
+            gpio_set_level(RED_LED, LED_OFF);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            gpio_set_level(GREEN_LED, LED_ON);
+            memset(&petnet_settings.ssid, 0, sizeof(petnet_settings.ssid));
+            memset(&petnet_settings.password, 0, sizeof(petnet_settings.password));
+            petnet_settings.datetime_registered = 0;
+            petnet_settings.datetime_last_boot = 0;
+            petnet_settings.is_registered = false;
+            petnet_settings.is_setup_done = false;
+            petnet_settings.is_24h_mode = false;
+            petnet_settings.is_notification_on = false;
+            memset(&petnet_settings.tz, 0, sizeof(petnet_settings.tz));
+            save_settings_to_nvs();
+            ESP_ERROR_CHECK(nvs_flash_erase_partition("otadata"));
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            esp_restart();
+        } else {
+            ESP_LOGI(TAG, "Button pressed for less than 5 seconds.");
+            gpio_set_level(RED_LED, LED_OFF);
+            gpio_set_level(GREEN_LED, LED_OFF);
+            force_reprovisioning = true;
+        }
+    }
 
     /*
      *   Wi-Fi Provisioning
      */
+    
 
-    if(gpio_get_level(BUTTON) == 0) {
-        ESP_LOGI(TAG, "Button is pressed down on boot.");
-        force_reprovisioning = true;
-        gpio_set_level(RED_LED, LED_ON);
-    }
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+
+    xTaskCreate(wifi_led, "wifi_status_led", 1024, &blue_led, 10, NULL);
 
     ESP_LOGI(TAG, "Starting WiFi Provisioning");
     esp_err_t err = wifi_provisioning(&wifi_info);
