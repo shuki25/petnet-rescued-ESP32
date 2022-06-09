@@ -148,8 +148,6 @@ void ntp_callback(struct timeval *tv) {
 
 
 esp_err_t save_settings_to_nvs() {
-    size_t nvs_size;
-
     nvs_handle_t eeprom_handle;
 
     ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
@@ -167,19 +165,59 @@ esp_err_t save_settings_to_nvs() {
 }
 
 
-// void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *response) {
-//     // clear buffer and payload struct
-//     if (payload->string != NULL) {
-//         free(payload->string);
-//     }
-//     if (response->string != NULL) {
-//         free(response->string);
-//     }
+void factory_settings_reset() {
+    esp_err_t rs;
 
-//     memset(buffer, 0, RX_BUFFER_SIZE);
-//     memset(response, 0, sizeof(nextion_response_t));
-//     memset(payload, 0, sizeof(nextion_payload_t));
-// }
+    memset(&petnet_settings.ssid, 0, sizeof(petnet_settings.ssid));
+    memset(&petnet_settings.password, 0, sizeof(petnet_settings.password));
+    memset(&petnet_settings.api_key, 0, sizeof(petnet_settings.api_key));
+    petnet_settings.datetime_registered = 0;
+    petnet_settings.datetime_last_boot = 0;
+    petnet_settings.is_registered = false;
+    petnet_settings.is_setup_done = false;
+    petnet_settings.is_24h_mode = false;
+    petnet_settings.is_notification_on = false;
+    memset(&petnet_settings.tz, 0, sizeof(petnet_settings.tz));
+    rs = nvs_flash_erase();
+    if (rs == ESP_OK) {
+        ESP_LOGI(TAG, "NVS flash erased.");
+    } else {
+        ESP_LOGI(TAG, "NVS flash erase failed. Error: %s", esp_err_to_name(rs));
+    }
+    rs = nvs_flash_init();
+    if (rs == ESP_OK) {
+        ESP_LOGI(TAG, "NVS flash init.");
+    } else {
+        ESP_LOGI(TAG, "NVS flash init failed. Error: %s", esp_err_to_name(rs));
+    }
+    save_settings_to_nvs();
+}
+
+void back_to_factory_partition() {
+    esp_partition_iterator_t  pi ;                                  // Iterator for find
+    const esp_partition_t*    factory ;                             // Factory partition
+    esp_err_t                 err ;
+
+    pi = esp_partition_find (ESP_PARTITION_TYPE_APP,               // Get partition iterator for
+                            ESP_PARTITION_SUBTYPE_APP_FACTORY,    // factory partition
+                            "factory") ;
+    if ( pi == NULL ) {                                                 // Check result
+        ESP_LOGE (TAG, "Failed to find factory partition");
+    }
+    else {
+        factory = esp_partition_get(pi) ;                        // Get partition struct
+        esp_partition_iterator_release(pi) ;                     // Release the iterator
+        err = esp_ota_set_boot_partition(factory) ;              // Set partition for boot
+        if (err != ESP_OK) {                                      // Check error
+            ESP_LOGE(TAG, "Failed to set factory partition for OTA");
+    	}
+	    else{
+            ESP_LOGI(TAG, "Factory partition set for OTA");
+            ESP_LOGI(TAG, "Rebooting...");
+            esp_restart();                                         // Restart ESP
+        }
+    }
+}
 
 static bool initialize() {
     char *content, *value, *endpoint;
@@ -349,6 +387,7 @@ static void red_blinky_task(void *data) {
     }
 }
 
+#if !GEN1
 static void green_blinky_task(void *data) {
     led_config_t led = *(led_config_t *) data;
     uint8_t previous_state = green_blinky;
@@ -372,6 +411,7 @@ static void green_blinky_task(void *data) {
         }
     }
 }
+#endif
 
 static void wifi_led(void *data) {
     led_config_t led = *(led_config_t *) data;
@@ -461,7 +501,7 @@ void task_manager() {
     uart_event_t uart_event;
     uint16_t loop_counter = 1, event_code;
     bool has_feeding_slot = false, nextion_next_meal = false;
-    float temp_reading, battery_soc, battery_voltage, battery_crate;
+    float battery_soc, battery_voltage, battery_crate;
     nextion_response_t response;
     nextion_response_t response2;
     nextion_payload_t payload;
@@ -476,6 +516,10 @@ void task_manager() {
     motor_timeout = time(&motor_timeout);
     prev_food_state = 0xff;
     prev_power_state = 0xff;
+
+    memset(&payload, 0, sizeof(nextion_payload_t));
+    memset(&response, 0, sizeof(nextion_response_t));
+    memset(&response2, 0, sizeof(nextion_response_t));
 
     while(true) {
 
@@ -876,9 +920,13 @@ void app_main(void) {
     // maximum and minimum frequencies are set in sdkconfig,
     // automatic light sleep is enabled if tickless idle support is enabled.
 
+#if CONFIG_IDF_TARGET_ESP32
     esp_pm_config_esp32_t pm_config = {
-        .max_freq_mhz = CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ,
-        .min_freq_mhz = CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ,
+#elif CONFIG_IDF_TARGET_ESP32S2
+    esp_pm_config_esp32s2_t pm_config = {
+#endif
+        .max_freq_mhz = CONFIG_MAX_CPU_FREQ_MHZ,
+        .min_freq_mhz = CONFIG_MAX_CPU_FREQ_MHZ,
 #if CONFIG_FREERTOS_USE_TICKLESS_IDLE
             .light_sleep_enable = true
 #endif
@@ -932,16 +980,24 @@ void app_main(void) {
     motor_pwm_init();
 
     // Set up LEDs
-    led_config_t blue_led, red_led, green_led;
+#if GEN1
+    led_config_t red_led, green_led;
+     green_led.io_num = GREEN_LED;
+    green_led.delay = 1000;
+    green_led.state = 0;
+#else
+    led_config_t blue_led
     blue_led.io_num = BLUE_LED;
     blue_led.delay = 1000;
     blue_led.state = 0;
-    red_led.io_num = RED_LED;
-    red_led.delay = 500;
-    red_led.state = 0;
     green_led.io_num = GREEN_LED;
     green_led.delay = 350;
     green_led.state = 0;
+#endif
+    red_led.io_num = RED_LED;
+    red_led.delay = 500;
+    red_led.state = 0;
+   
 
     red_blinky = false;
     green_blinky = false;
@@ -1012,19 +1068,10 @@ void app_main(void) {
             gpio_set_level(RED_LED, LED_OFF);
             vTaskDelay(1000 / portTICK_PERIOD_MS);
             gpio_set_level(GREEN_LED, LED_ON);
-            memset(&petnet_settings.ssid, 0, sizeof(petnet_settings.ssid));
-            memset(&petnet_settings.password, 0, sizeof(petnet_settings.password));
-            petnet_settings.datetime_registered = 0;
-            petnet_settings.datetime_last_boot = 0;
-            petnet_settings.is_registered = false;
-            petnet_settings.is_setup_done = false;
-            petnet_settings.is_24h_mode = false;
-            petnet_settings.is_notification_on = false;
-            memset(&petnet_settings.tz, 0, sizeof(petnet_settings.tz));
-            save_settings_to_nvs();
-            ESP_ERROR_CHECK(nvs_flash_erase_partition("otadata"));
+            factory_settings_reset();
+            ESP_LOGI(TAG, "Rebooting to Factory partition.");
             vTaskDelay(1000 / portTICK_PERIOD_MS);
-            esp_restart();
+            back_to_factory_partition();
         } else {
             ESP_LOGI(TAG, "Button pressed for less than 5 seconds.");
             gpio_set_level(RED_LED, LED_OFF);
@@ -1040,12 +1087,14 @@ void app_main(void) {
 
     vTaskDelay(200 / portTICK_PERIOD_MS);
 
+#if GEN1
+    xTaskCreate(wifi_led, "wifi_status_led", 1024, &green_led, 10, NULL);
+#else
     xTaskCreate(wifi_led, "wifi_status_led", 1024, &blue_led, 10, NULL);
-
+#endif
     ESP_LOGI(TAG, "Starting WiFi Provisioning");
     esp_err_t err = wifi_provisioning(&wifi_info);
-    gpio_set_level(RED_LED, LED_OFF);
-    gpio_set_level(GREEN_LED, LED_ON);
+    gpio_set_level(RED_LED, LED_ON);
 
     ESP_LOGI(TAG, "WiFi Provisioning Completed");
 
@@ -1076,8 +1125,9 @@ void app_main(void) {
     else {
         is_nextion_available = false;
     }
-
+#if !GEN1
     xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
+#endif
     xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
     bool diagnostic_is_ok = initialize();
 
@@ -1106,10 +1156,7 @@ void app_main(void) {
     gpio_isr_handler_add(BUTTON, gpio_isr_handler, (void *) BUTTON);
     gpio_isr_handler_add(POWER_SNSR, gpio_isr_handler, (void *) POWER_SNSR);
 
-    gpio_set_level(GREEN_LED, LED_OFF);
-    // xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
-    // xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
-
+    gpio_set_level(RED_LED, LED_OFF);
     xTaskCreate(task_manager, "task_manager", 12288, NULL, 10, NULL);
 
     while(true) {
