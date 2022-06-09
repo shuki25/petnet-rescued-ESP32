@@ -3,7 +3,7 @@
 
 #include "driver/ledc.h"
 #include "driver/i2c.h"
-
+#if CONFIG_IDF_TARGET_ESP32
 #define BLUE_LED        27
 #define RED_LED         25
 #define GREEN_LED       26
@@ -13,6 +13,17 @@
 #define BUTTON          23
 #define BATTERY_ALERT   4
 #define POWER_SNSR      5  
+#elif CONFIG_IDF_TARGET_ESP32S2
+#define BLUE_LED        8
+#define RED_LED         6
+#define GREEN_LED       7
+#define MOTOR_SNSR      14
+#define MOTOR_RELAY     10
+#define HOPPER_SNSR     11
+#define BUTTON          12
+#define BATTERY_ALERT   4
+#define POWER_SNSR      5  
+#endif
 
 #define GPIO_OUTPUT_PIN_SEL     ((1ULL<<RED_LED) | (1ULL<<GREEN_LED) | (1ULL<<BLUE_LED))
 #define GPIO_INPUT_PIN_SEL      ((1ULL<<MOTOR_SNSR) | (1ULL<<BATTERY_ALERT))
@@ -39,8 +50,13 @@
 #define PWM_FREQUENCY   (5000)
 
 // I2C configuration
+#if CONFIG_IDF_TARGET_ESP32
 #define I2C_MASTER_SCL_IO           22                          /*!< GPIO number used for I2C master clock */
 #define I2C_MASTER_SDA_IO           21                          /*!< GPIO number used for I2C master data  */
+#elif CONFIG_IDF_TARGET_ESP32S2
+#define I2C_MASTER_SCL_IO           37                          /*!< GPIO number used for I2C master clock */
+#define I2C_MASTER_SDA_IO           38                          /*!< GPIO number used for I2C master data  */
+#endif
 #define I2C_MASTER_NUM              0                           /*!< I2C master i2c port number, the number of i2c peripheral interfaces available will depend on the chip */
 #define I2C_MASTER_FREQ_HZ          400000                      /*!< I2C master clock frequency */
 #define I2C_MASTER_TX_BUF_DISABLE   0                           /*!< I2C master doesn't need buffer */
@@ -63,12 +79,22 @@
 #define WIFI_MAX_RETRY  CONFIG_ESP_MAXIMUM_RETRY
 #endif
 
-#ifdef GEN1
+#if CONFIG_IDF_TARGET_ESP32
+#define CONFIG_MAX_CPU_FREQ_MHZ     CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ
+#elif CONFIG_IDF_TARGET_ESP32S2
+#define CONFIG_MAX_CPU_FREQ_MHZ     CONFIG_ESP32S2_DEFAULT_CPU_FREQ_MHZ
+#endif
+
+#if CONFIG_IDF_TARGET_ESP32S2
+#define LED_ON  1
+#define LED_OFF 0
+#define CONTROL_BOARD_REVISION   "D-1g"
+#define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revD-1g-current.bin"
+#elif GEN1
 #define LED_ON  1
 #define LED_OFF 0
 #define CONTROL_BOARD_REVISION   "C-1g"
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-1g-current.bin"
-
 #else
 #define LED_ON  0
 #define LED_OFF 1
