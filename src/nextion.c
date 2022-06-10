@@ -440,6 +440,26 @@ void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *re
     memset(payload, 0, sizeof(nextion_payload_t));
 }
 
+nextion_err_t wakeup_from_sleep(uart_port_t uart_port) {
+    char buffer[RX_BUFFER_SIZE];
+    nextion_response_t response;
+    nextion_payload_t payload;
+    nextion_err_t status;
+
+    memset(buffer, 0, RX_BUFFER_SIZE);
+    memset(&response, 0, sizeof(nextion_response_t));
+    memset(&payload, 0, sizeof(nextion_payload_t));
+    
+    status = send_command(UART_NUM_1, "sleep=0", &response);
+    if (status == NEXTION_OK) {
+         if(response.string != NULL) {
+            free(response.string);
+            memset(&response, 0, sizeof(nextion_response_t));
+        }
+    }
+    return status;
+}
+
 nextion_err_t initialize_nextion_connection(uart_port_t uart_port) {
     char buffer[RX_BUFFER_SIZE];
     nextion_response_t response;
@@ -450,7 +470,11 @@ nextion_err_t initialize_nextion_connection(uart_port_t uart_port) {
     memset(&response, 0, sizeof(nextion_response_t));
     memset(&payload, 0, sizeof(nextion_payload_t));
 
-    // send_command(UART_NUM_1, "bkcmd=3", &response);
+    status = wakeup_from_sleep(uart_port);
+    if (status != NEXTION_OK) {
+        return status;
+    }
+    
     payload.number=3;
     payload.string=NULL;
     status = set_value(uart_port, "bkcmd", &payload, &response);

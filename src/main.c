@@ -840,6 +840,8 @@ void app_main(void) {
     
     uint8_t sha_256[HASH_LEN] = { 0 };
     esp_partition_t partition;
+    nextion_response_t nextion_response;
+    memset(&nextion_response, 0, sizeof(nextion_response_t));
 
     // get sha256 digest for the partition table
     partition.address   = ESP_PARTITION_TABLE_OFFSET;
@@ -921,10 +923,11 @@ void app_main(void) {
     // automatic light sleep is enabled if tickless idle support is enabled.
 
 #if CONFIG_IDF_TARGET_ESP32
-    esp_pm_config_esp32_t pm_config = {
+    esp_pm_config_esp32_t pm_config = 
 #elif CONFIG_IDF_TARGET_ESP32S2
-    esp_pm_config_esp32s2_t pm_config = {
+    esp_pm_config_esp32s2_t pm_config = 
 #endif
+    {
         .max_freq_mhz = CONFIG_MAX_CPU_FREQ_MHZ,
         .min_freq_mhz = CONFIG_MAX_CPU_FREQ_MHZ,
 #if CONFIG_FREERTOS_USE_TICKLESS_IDLE
@@ -980,13 +983,13 @@ void app_main(void) {
     motor_pwm_init();
 
     // Set up LEDs
-#if GEN1
     led_config_t red_led, green_led;
-     green_led.io_num = GREEN_LED;
+#if GEN1
+    green_led.io_num = GREEN_LED;
     green_led.delay = 1000;
     green_led.state = 0;
 #else
-    led_config_t blue_led
+    led_config_t blue_led;
     blue_led.io_num = BLUE_LED;
     blue_led.delay = 1000;
     blue_led.state = 0;
@@ -1080,6 +1083,30 @@ void app_main(void) {
         }
     }
 
+    // Set up Semahpore Mutex
+    nextion_mutex = xSemaphoreCreateMutex();
+    if (nextion_mutex != NULL) {
+        ESP_LOGI(TAG, "Created Semaphore Mutex Successfully.");
+    }
+    else {
+        ESP_LOGE(TAG, "Create Semaphore Mutex Failed.");
+    }
+    
+    // Activate UART with Nextion
+    ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, RX_BUFFER_SIZE, TX_BUFFER_SIZE, 20, &uart_queue, 0));
+    uart_enable_pattern_det_baud_intr(UART_NUM_1, EOL_PATTERN_CHAR, PATTERN_LEN, 9, 0, 0);
+    uart_pattern_queue_reset(UART_NUM_1, 20);
+
+    if (initialize_nextion_connection(UART_NUM_1) == NEXTION_OK) {
+        is_nextion_available = true;
+        send_command(UART_NUM_1, "page page0", &nextion_response);
+    }
+    else {
+        is_nextion_available = false;
+    }
+
     /*
      *   Wi-Fi Provisioning
      */
@@ -1103,28 +1130,6 @@ void app_main(void) {
         ESP_LOGI(TAG, "Station IP:" IPSTR " MAC ID:" MACSTR "", IP2STR(&wifi_info.netif_info.ip), MAC2STR(wifi_info.mac));
     }
 
-    // Set up Semahpore Mutex
-    nextion_mutex = xSemaphoreCreateMutex();
-    if (nextion_mutex != NULL) {
-        ESP_LOGI(TAG, "Created Semaphore Mutex Successfully.");
-    }
-    else {
-        ESP_LOGE(TAG, "Create Semaphore Mutex Failed.");
-    }
-    
-    // Activate UART with Nextion
-    ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, RX_BUFFER_SIZE, TX_BUFFER_SIZE, 20, &uart_queue, 0));
-    uart_enable_pattern_det_baud_intr(UART_NUM_1, EOL_PATTERN_CHAR, PATTERN_LEN, 9, 0, 0);
-    uart_pattern_queue_reset(UART_NUM_1, 20);
-
-    if (initialize_nextion_connection(UART_NUM_1) == NEXTION_OK) {
-        is_nextion_available = true;
-    }
-    else {
-        is_nextion_available = false;
-    }
 #if !GEN1
     xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
 #endif

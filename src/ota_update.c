@@ -157,6 +157,11 @@ void ota_update_task()
                     image_header_was_checked = true;
 
                     if (is_nextion_available) {
+                        // Wake up Nextion if it is sleeping
+                        if (is_nextion_sleeping) {
+                            send_command(UART_NUM_1, "sleep=0", &nextion_response);
+                            reset_data(buffer, &nextion_payload, &nextion_response);
+                        }
                         send_command(UART_NUM_1, "page page10", &nextion_response);
                         reset_data(buffer, &nextion_payload, &nextion_response);
                     }
