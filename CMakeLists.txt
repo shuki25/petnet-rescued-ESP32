@@ -1,3 +1,6 @@
 cmake_minimum_required(VERSION 3.16.0)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(petnet-rescued-ESP32)
+file (STRINGS "BuildNumber" BUILD_NUMBER)
+file (STRINGS "BoardRevision" BOARD_REVISION)
+set(PROJECT_VER "v1.0.${BUILD_NUMBER}")
+project("smart-petfeeder-${BOARD_REVISION}")
