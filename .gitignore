@@ -7,3 +7,6 @@
 *.old
 sdkconfig.esp32dev
 platformio.ini
+BoardRevision
+BuildNumber
+include/version.h
