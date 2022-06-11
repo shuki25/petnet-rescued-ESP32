@@ -10,3 +10,4 @@ platformio.ini
 BoardRevision
 BuildNumber
 include/version.h
+*.log
