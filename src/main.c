@@ -123,6 +123,7 @@ static void gpio_task_handler(void *arg) {
 }
 
 void ntp_callback(struct timeval *tv) {
+    ESP_LOGI(TAG, "NTP callback");
     ESP_LOGI(TAG, "Secs: %ld", tv->tv_sec);
     struct tm *timeinfo;
     char buffer[50];
@@ -227,7 +228,7 @@ static bool initialize() {
     char buffer[RX_BUFFER_SIZE];
     nextion_response_t nextion_response;
     nextion_payload_t nextion_payload;
-    bool is_registered = false, nextion_setup_page = false;
+    bool is_registered = false, nextion_setup_page = false, error_page = false;
 
     memset(buffer, 0, RX_BUFFER_SIZE);
     memset(&nextion_payload, 0, sizeof(nextion_payload_t));
@@ -235,6 +236,18 @@ static bool initialize() {
 
     // reset_data(buffer, &nextion_payload, &nextion_response);
 
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_app_desc_t running_app_info;
+    if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK) {
+        ESP_LOGI(TAG, "Running firmware version: %s", running_app_info.version);
+    }
+    if (strcmp(petnet_settings.firmware_version, running_app_info.version) != 0) {
+        ESP_LOGI(TAG, "Different firmware versions. Saving changes to flash");
+        strcpy(petnet_settings.firmware_version, running_app_info.version);
+        save_settings_to_nvs();
+
+    }
+    
     // Send Device ID and Activation Code to nextion
     if (is_nextion_available) {
         nextion_payload.string = malloc(sizeof(char) * strlen(petnet_settings.firmware_version) + 1);
@@ -260,7 +273,6 @@ static bool initialize() {
         
         sprintf(endpoint, "/device/verify/%s/%s/", petnet_settings.device_id, petnet_settings.secret);
         status_code = api_get(&content, "", "", endpoint);
-
         if (status_code == 200) {
             payload = cJSON_Parse(content);
             results = cJSON_GetObjectItem(payload, "status");
@@ -294,13 +306,19 @@ static bool initialize() {
                     petnet_settings.device_key[0] = 0x00;
                 }
                 is_registered = true;
+                petnet_settings.is_registered = true;
                 ESP_LOGI(TAG, "Device is registered. Receiving information from server.");
+                if (error_page && is_nextion_available) {
+                    error_page = false;
+                    send_command(UART_NUM_1, "page page0", &nextion_response);
+                    reset_data(buffer, &nextion_payload, &nextion_response);
+                }
             }
             else {
                 green_blinky = true;
                 ESP_LOGI(TAG, "Device is not registered yet. Please register the device using the QRCODE provided with the control board.");
                 vTaskDelay(10000 / portTICK_PERIOD_MS);
-                if (!nextion_setup_page) {
+                if (!nextion_setup_page && is_nextion_available) {
                     nextion_setup_page = true;
                     send_command(UART_NUM_1, "page page8", &nextion_response);
                     reset_data(buffer, &nextion_payload, &nextion_response);
@@ -308,57 +326,86 @@ static bool initialize() {
             }
             cJSON_Delete(payload);
         }
-        else {
+        else if (status_code >= 500) {
             ESP_LOGI(TAG, "Server error: %d", status_code);
+            if (petnet_settings.is_registered) {
+                ESP_LOGI(TAG, "Previously registered, continuing...");
+                send_command(UART_NUM_1, "page1.server_offline.val=1", &nextion_response);
+                reset_response(&nextion_response);
+                is_registered = true;
+            } else {
+                ESP_LOGI(TAG, "Not previously registered, waiting for the server getting back online...");
+                if (!error_page && is_nextion_available) {
+                    error_page = true;
+                    send_command(UART_NUM_1, "page page3", &nextion_response);
+                    reset_data(buffer, &nextion_payload, &nextion_response);
+                }
+                vTaskDelay(10000 / portTICK_PERIOD_MS);
+            }
         }
         free(content);
+        content = NULL;
     }
     free(endpoint);
+    endpoint = NULL;
+
     green_blinky = false;
     vTaskDelay(500 / portTICK_PERIOD_MS);
     gpio_set_level(GREEN_LED, LED_ON);
 
     // Get settings
-    api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/settings/");
-    
-    ESP_LOGD(TAG, "Content-length: %d - Hex Dump", strlen(content));
-    ESP_LOG_BUFFER_HEXDUMP(TAG, content, strlen(content), ESP_LOG_DEBUG);
-    
-    payload = cJSON_Parse(content);
+    status_code = api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/settings/");
 
-    if (payload != NULL) {
-        results = cJSON_GetObjectItem(payload, "results");
-        value = fetch_json_value(results, "is_setup_done");
-        if (value) {
-            petnet_settings.is_setup_done = atoi(value);
+    if (status_code == 200) {  
+        ESP_LOGD(TAG, "Content-length: %d - Hex Dump", strlen(content));
+        ESP_LOG_BUFFER_HEXDUMP(TAG, content, strlen(content), ESP_LOG_DEBUG);
+        
+        payload = cJSON_Parse(content);
+
+        if (payload != NULL) {
+            results = cJSON_GetObjectItem(payload, "results");
+            value = fetch_json_value(results, "is_setup_done");
+            if (value) {
+                petnet_settings.is_setup_done = atoi(value);
+            }
+            value = fetch_json_value(results, "tz_esp32");
+            if (value) {
+                strcpy(petnet_settings.tz, value);
+            }
+            ESP_LOGI(TAG, "is_setup_done = %d, tz = %s", petnet_settings.is_setup_done, petnet_settings.tz);
+        } else {
+            ESP_LOGE(TAG, "Error with JSON");
         }
-        value = fetch_json_value(results, "tz_esp32");
-        if (value) {
-            strcpy(petnet_settings.tz, value);
-        }
-        ESP_LOGI(TAG, "is_setup_done = %d, tz = %s", petnet_settings.is_setup_done, petnet_settings.tz);
-    } else {
-        ESP_LOGI(TAG, "Error with JSON");
+        cJSON_Delete(payload);
     }
-
-    cJSON_Delete(payload);
-    free(content);
-
-    api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/feeding-schedule/");
-    ESP_LOGD(TAG, "Content-length: %d - Hex Dump", strlen(content));
-    ESP_LOG_BUFFER_HEXDUMP(TAG, content, strlen(content), ESP_LOG_DEBUG);
-
-    feeding_schedule_init(content, &feeding_schedule, &num_feeding_times);
-    ESP_LOGI(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
-    free(content);
-
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    esp_app_desc_t running_app_info;
-    if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK) {
-        ESP_LOGI(TAG, "Running firmware version: %s", running_app_info.version);
+    else if (status_code >= 500) {
+        ESP_LOGE(TAG, "Server error: %d", status_code);
+        ESP_LOGE(TAG, "Using settings from NVS");
     }
-    strcpy(petnet_settings.firmware_version, running_app_info.version);
+    free(content);
+    content = NULL;
+
     save_settings_to_nvs();
+
+    status_code = api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/feeding-schedule/");
+
+    if (status_code == 200) {
+        ESP_LOGD(TAG, "Content-length: %d - Hex Dump", strlen(content));
+        ESP_LOG_BUFFER_HEXDUMP(TAG, content, strlen(content), ESP_LOG_DEBUG);
+        feeding_schedule_init(content, &feeding_schedule, &num_feeding_times);
+        ESP_LOGI(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
+    } else if(status_code >= 500) {
+        ESP_LOGE(TAG, "Server error: %d", status_code);
+        ESP_LOGI(TAG, "Loading feeding schedule from NVS");
+        esp_err_t rs = load_feeding_schedule(&feeding_schedule, &num_feeding_times);
+        if (rs != ESP_OK) {
+            ESP_LOGE(TAG, "Error loading feeding schedule from NVS, continuing without feeding schedule");
+        }
+    } else {
+        ESP_LOGE(TAG, "Server error: %d", status_code);
+    }
+    free(content);
+    content = NULL;
 
     return true;
 }
@@ -501,21 +548,26 @@ void task_manager() {
     uart_event_t uart_event;
     uint16_t loop_counter = 1, event_code;
     bool has_feeding_slot = false, nextion_next_meal = false;
+    bool is_nextion_showing_error_page = false;
     float battery_soc, battery_voltage, battery_crate;
     nextion_response_t response;
     nextion_response_t response2;
     nextion_payload_t payload;
     uint8_t wifi_connect = 0xff;
     time_t next_feeding_slot, motor_timeout, current_time, time_diff;
-    uint8_t next_feeding_index, status = (uint8_t)404;
+    uint8_t next_feeding_index;
     uint8_t prev_food_state, prev_power_state;
-    uint16_t status_code = (uint16_t)500;
+    uint16_t status_code = (uint16_t)500, status = (uint8_t)404;
     cJSON *json_payload, *results, *event_payload;
     struct tm *timeinfo;
 
     motor_timeout = time(&motor_timeout);
     prev_food_state = 0xff;
     prev_power_state = 0xff;
+    api_content = NULL;
+    json_payload = NULL;
+    results = NULL;
+    event_payload = NULL;
 
     memset(&payload, 0, sizeof(nextion_payload_t));
     memset(&response, 0, sizeof(nextion_response_t));
@@ -654,7 +706,7 @@ void task_manager() {
                 results = cJSON_GetObjectItem(json_payload, "status");
                 
                 if (cJSON_IsNumber(results)) {
-                    status = (uint8_t)results->valueint;
+                    status = (uint16_t)results->valueint;
                 }
 
                 if (status == 200) {
@@ -672,12 +724,37 @@ void task_manager() {
                             }
                         }
                     }
+                    if(is_nextion_showing_error_page) {
+                        if(is_nextion_available) {
+                            ESP_LOGI(TAG, "Nextion is showing offline mode, clearing offline mode status.");
+                            if (is_nextion_sleeping) {
+                                wakeup_from_sleep(UART_NUM_1);
+                            }
+                            send_command(UART_NUM_1, "page1.server_offline.val=0", &response);
+                            reset_response(&response);
+                        }
+                        is_nextion_showing_error_page = false;
+                        red_blinky = false;
+                    }
                 }
                 else {
-                    ESP_LOGI(TAG, "Status code: %d", status);
+                    ESP_LOGI(TAG, "Other cJSON Status code: %d", status);
                 }
                 cJSON_Delete(json_payload);
             }
+            else if (status_code >= 500) {
+                    ESP_LOGE(TAG, "Server Error: %d", status_code);                   
+                    if(!is_nextion_showing_error_page && is_nextion_available) {
+                        if(is_nextion_sleeping) {
+                            wakeup_from_sleep(UART_NUM_1);
+                        }
+                        ESP_LOGI(TAG, "Showing offline mode.");
+                        send_command(UART_NUM_1, "page1.server_offline.val=1", &response);
+                        reset_response(&response);
+                    }
+                    is_nextion_showing_error_page = true;
+                    red_blinky = true;
+                }
             else if (status_code == 403)
             {
                ESP_LOGI(TAG, "Authentication failed. Restarting.");
@@ -688,6 +765,7 @@ void task_manager() {
                 ESP_LOGI(TAG, "Server error. Status code: %d ", status_code);
             }
             free(api_content);
+            api_content = NULL;
         }
 
         // If Wifi connection status changes, update the wifi icon

@@ -3,11 +3,96 @@
 #include "feeding.h"
 #include "json_util.h"
 #include "esp_log.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "util.h"
 
 const char *TAG = "feeding.c";
 int feeding_dow[7] = {1, 2, 4, 8, 16, 32, 64};
 
+
+esp_err_t store_feeding_schedule(feeding_schedule_t **dp_schedule, uint8_t nbr_feeding_times) {
+    feeding_schedule_t *schedule = *dp_schedule;
+    ESP_LOGI(TAG, "sizeof *schedule: %d, sizeof feeding_schedule_t: %d", sizeof(*schedule), sizeof(feeding_schedule_t));
+    
+    u_int16_t size = sizeof(*schedule) * nbr_feeding_times;
+    ESP_LOG_BUFFER_HEXDUMP(TAG, schedule, size, ESP_LOG_INFO);
+
+    nvs_handle_t eeprom_handle;
+
+    ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
+
+    esp_err_t rs = nvs_set_u8(eeprom_handle, "nbr_feeding", nbr_feeding_times);
+    if (rs != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_u8 failed: %s", esp_err_to_name(rs));
+        return rs;
+    } else {
+        ESP_LOGI(TAG, "nvs_set_u8 succeeded");
+        ESP_ERROR_CHECK(nvs_commit(eeprom_handle));
+    }
+
+    rs = nvs_erase_key(eeprom_handle, "schedule");
+    if (rs != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_erase_key failed: %s", esp_err_to_name(rs));
+    } else {
+        ESP_LOGI(TAG, "nvs_erase_key succeeded");
+        ESP_ERROR_CHECK(nvs_commit(eeprom_handle));
+    }
+
+    rs = nvs_set_blob(eeprom_handle, "schedule", schedule, size);
+    if (rs == ESP_OK) {
+        ESP_ERROR_CHECK(nvs_commit(eeprom_handle));
+        ESP_LOGI(TAG, "Feeding schedule saved to NVS.");
+    } else {
+        ESP_LOGI(TAG, "Feeding schedule not saved to NVS. Error: %s", esp_err_to_name(rs));
+    }
+    
+    nvs_close(eeprom_handle);
+    return rs;
+}
+
+esp_err_t load_feeding_schedule(feeding_schedule_t **dp_schedule, uint8_t *nbr_feeding_times) {
+    feeding_schedule_t *schedule = NULL;
+    *nbr_feeding_times = 0;
+
+    ESP_LOGI(TAG, "Loading feeding schedule");
+
+    nvs_handle_t eeprom_handle;
+
+    ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
+
+    esp_err_t rs = nvs_get_u8(eeprom_handle, "nbr_feeding", nbr_feeding_times);
+    if (rs != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_get_u8 failed: %s", esp_err_to_name(rs));
+        return rs;
+    } else {
+        ESP_LOGI(TAG, "nvs_get_u8 succeeded");
+    }
+
+    size_t size = sizeof(*schedule) * *nbr_feeding_times;
+    ESP_LOGI(TAG, "nbr_feeding_times: %d, sizeof feeding_schedule_t: %d, size: %d", *nbr_feeding_times, sizeof(feeding_schedule_t), size);
+    schedule = malloc(size);
+    memset(schedule, 0, sizeof(*schedule) * *nbr_feeding_times);
+
+    if (schedule == NULL) {
+        ESP_LOGE(TAG, "malloc failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    rs = nvs_get_blob(eeprom_handle, "schedule", schedule, &size);
+    if (rs == ESP_OK) {
+        ESP_LOGI(TAG, "Feeding schedule loaded from NVS.");
+
+    } else {
+        ESP_LOGI(TAG, "Feeding schedule not loaded from NVS. Error: %s", esp_err_to_name(rs));
+    }
+
+    *dp_schedule = schedule;
+    nvs_close(eeprom_handle);
+
+    ESP_LOG_BUFFER_HEXDUMP(TAG, schedule, size, ESP_LOG_INFO);
+    return rs;
+}
 
 void feeding_schedule_init(char *json_payload, feeding_schedule_t **dp_schedule, uint8_t *nbr_feeding_times) {
     cJSON *payload, *object, *results;
@@ -41,7 +126,7 @@ void feeding_schedule_init(char *json_payload, feeding_schedule_t **dp_schedule,
             cJSON *meal_name = cJSON_GetObjectItem(object, "meal_name");            
             cJSON *pet = cJSON_GetObjectItem(object, "pet");
             if (cJSON_IsString(meal_name)) {
-                schedule[i].meal_name = malloc(sizeof(char) * strlen(meal_name->valuestring) + 1);
+                // schedule[i].meal_name = malloc(sizeof(char) * strlen(meal_name->valuestring) + 1);
                 strcpy(schedule[i].meal_name, meal_name->valuestring);
             }
             if (cJSON_IsBool(active_flag)) {
@@ -50,7 +135,7 @@ void feeding_schedule_init(char *json_payload, feeding_schedule_t **dp_schedule,
             if (cJSON_IsObject(pet)) {
                 cJSON *pet_name = cJSON_GetObjectItem(pet, "name");
                 if (cJSON_IsString(pet_name)) {
-                    schedule[i].pet_name = malloc(sizeof(char) * strlen(pet_name->valuestring) + 1);
+                    // schedule[i].pet_name = malloc(sizeof(char) * strlen(pet_name->valuestring) + 1);
                     strcpy(schedule[i].pet_name, pet_name->valuestring);
                 }
             }
@@ -85,18 +170,22 @@ void feeding_schedule_init(char *json_payload, feeding_schedule_t **dp_schedule,
     }
     *dp_schedule = schedule;
     cJSON_Delete(payload);
+    esp_err_t rs = store_feeding_schedule(&schedule, *nbr_feeding_times);
+    if (rs != ESP_OK) {
+        ESP_LOGE(TAG, "store_feeding_schedule failed: %s", esp_err_to_name(rs));
+    }
 }
 
 void feeding_schedule_free(feeding_schedule_t **dp_schedule, uint8_t nbr_feeding_times) {
     print_heap_size("Before freeing memory from schedule");
     feeding_schedule_t *schedule = *dp_schedule;
 
-    ESP_LOG_BUFFER_HEXDUMP(TAG, schedule, sizeof(*schedule) * nbr_feeding_times, ESP_LOG_DEBUG);
+    ESP_LOG_BUFFER_HEXDUMP(TAG, schedule, sizeof(*schedule) * nbr_feeding_times, ESP_LOG_INFO);
 
-    for (int i=0; i < nbr_feeding_times; i++) {
-        free(schedule[i].pet_name);
-        free(schedule[i].meal_name);
-    }
+    // for (int i=0; i < nbr_feeding_times; i++) {
+    //     free(schedule[i].pet_name);
+    //     free(schedule[i].meal_name);
+    // }
     free(schedule);
     print_heap_size("After freeing memory from schedule");
 }
@@ -141,4 +230,4 @@ void get_next_feeding_time(time_t *next_time, uint8_t *feed_index, feeding_sched
             *next_time = feeding_time;
         }
     }
-} 
+}
