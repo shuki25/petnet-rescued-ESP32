@@ -40,10 +40,9 @@ static void __attribute__((noreturn)) task_fatal_error(void)
     ESP_LOGE(TAG, "Exiting task due to fatal error...");
     (void)vTaskDelete(NULL);
 
-    while (1) {
+    while (true) {
         red_blinky = false;
-        gpio_set_level(RED_LED, 0);
-        ;
+        gpio_set_level(RED_LED, LED_ON);
     }
 }
 
@@ -157,13 +156,11 @@ void ota_update_task()
                     image_header_was_checked = true;
 
                     if (is_nextion_available) {
-                        // Wake up Nextion if it is sleeping
                         if (is_nextion_sleeping) {
-                            send_command(UART_NUM_1, "sleep=0", &nextion_response);
-                            reset_data(buffer, &nextion_payload, &nextion_response);
+                            wakeup_from_sleep(UART_NUM_1);
                         }
                         send_command(UART_NUM_1, "page page10", &nextion_response);
-                        reset_data(buffer, &nextion_payload, &nextion_response);
+                        reset_response(&nextion_response);
                     }
                     
                     err = esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &update_handle);
@@ -230,8 +227,9 @@ void ota_update_task()
     }
     ESP_LOGI(TAG, "Prepare to restart system!");
     if (is_nextion_available) {
+        wakeup_from_sleep(UART_NUM_1);
         send_command(UART_NUM_1, "page page0", &nextion_response);
-        reset_data(buffer, &nextion_payload, &nextion_response);
+        reset_response(&nextion_response);
     }
     gpio_set_level(GREEN_LED, LED_ON);
     vTaskDelay(3000 / portTICK_PERIOD_MS);
