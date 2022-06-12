@@ -1,7 +1,7 @@
 FILENAME_BUILDNO = 'BuildNumber'
 FILENAME_VERSION_H = 'include/version.h'
 FILENAME_BOARD_REVISION = 'BoardRevision'
-version = 'v1.0.1.'
+version = 'v1.1.0.'
 
 import datetime
 import sys
