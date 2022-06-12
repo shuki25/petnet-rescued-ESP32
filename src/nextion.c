@@ -440,6 +440,22 @@ void reset_data(char *buffer, nextion_payload_t *payload, nextion_response_t *re
     memset(payload, 0, sizeof(nextion_payload_t));
 }
 
+void reset_response(nextion_response_t *response) {
+    // clear response struct
+    if (response->string != NULL) {
+        free(response->string);
+    }
+    memset(response, 0, sizeof(nextion_response_t));
+}
+
+void reset_payload(nextion_payload_t *payload) {
+    // clear payload struct
+    if (payload->string != NULL) {
+        free(payload->string);
+    }
+    memset(payload, 0, sizeof(nextion_payload_t));
+}
+
 nextion_err_t wakeup_from_sleep(uart_port_t uart_port) {
     char buffer[RX_BUFFER_SIZE];
     nextion_response_t response;
@@ -474,7 +490,7 @@ nextion_err_t initialize_nextion_connection(uart_port_t uart_port) {
     if (status != NEXTION_OK) {
         return status;
     }
-    
+
     payload.number=3;
     payload.string=NULL;
     status = set_value(uart_port, "bkcmd", &payload, &response);
