@@ -30,6 +30,7 @@
 #include "wifi_provision.h"
 #include "api_client.h"
 #include "main.h"
+#include "settings.h"
 #include "json_util.h"
 #include "util.h"
 #include "nextion.h"
@@ -64,9 +65,9 @@ bool is_clock_set = false;
 feeding_schedule_t *feeding_schedule;
 uint8_t num_feeding_times;
 bool get_next_meal_slot = true;
+bool manual_feeding = false;
 bool tz_changed = false;
 uint8_t red_blinky, green_blinky;
-
 
 
 static void IRAM_ATTR gpio_isr_handler(void *arg) {
@@ -146,25 +147,6 @@ void ntp_callback(struct timeval *tv) {
     }
     tz_changed = false;
 }
-
-
-esp_err_t save_settings_to_nvs() {
-    nvs_handle_t eeprom_handle;
-
-    ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
-    esp_err_t rs = nvs_set_blob(eeprom_handle, "settings", &petnet_settings, sizeof(petnet_rescued_settings_t));
-    
-    if (rs == ESP_OK) {
-        ESP_ERROR_CHECK(nvs_commit(eeprom_handle));
-        ESP_LOGI(TAG, "Settings saved to NVS.");
-    } else {
-        ESP_LOGI(TAG, "Settings not saved to NVS. Error: %s", esp_err_to_name(rs));
-    }
-    
-    nvs_close(eeprom_handle);
-    return rs;
-}
-
 
 void factory_settings_reset() {
     esp_err_t rs;
@@ -353,39 +335,7 @@ static bool initialize() {
     vTaskDelay(500 / portTICK_PERIOD_MS);
     gpio_set_level(GREEN_LED, LED_ON);
 
-    // Get settings
-    status_code = api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/settings/");
-
-    if (status_code == 200) {  
-        ESP_LOGD(TAG, "Content-length: %d - Hex Dump", strlen(content));
-        ESP_LOG_BUFFER_HEXDUMP(TAG, content, strlen(content), ESP_LOG_DEBUG);
-        
-        payload = cJSON_Parse(content);
-
-        if (payload != NULL) {
-            results = cJSON_GetObjectItem(payload, "results");
-            value = fetch_json_value(results, "is_setup_done");
-            if (value) {
-                petnet_settings.is_setup_done = atoi(value);
-            }
-            value = fetch_json_value(results, "tz_esp32");
-            if (value) {
-                strcpy(petnet_settings.tz, value);
-            }
-            ESP_LOGI(TAG, "is_setup_done = %d, tz = %s", petnet_settings.is_setup_done, petnet_settings.tz);
-        } else {
-            ESP_LOGE(TAG, "Error with JSON");
-        }
-        cJSON_Delete(payload);
-    }
-    else if (status_code >= 500) {
-        ESP_LOGE(TAG, "Server error: %d", status_code);
-        ESP_LOGE(TAG, "Using settings from NVS");
-    }
-    free(content);
-    content = NULL;
-
-    save_settings_to_nvs();
+    get_settings_from_server();
 
     status_code = api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/feeding-schedule/");
 
@@ -718,10 +668,6 @@ void task_manager() {
                             ESP_LOGI(TAG, "Calling event handler");
                             event_code = process_event(event_payload);
                             ESP_LOGI(TAG, "Event Processed. Code: %d", event_code);
-                            if (event_code == SMART_FEEDER_EVENT_SETTINGS_CHANGE) {
-                                ESP_LOGI(TAG, "Saving settings to NVS.");
-                                save_settings_to_nvs();
-                            }
                         }
                     }
                     if(is_nextion_showing_error_page) {
@@ -953,21 +899,36 @@ void app_main(void) {
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
 
-    esp_err_t rs = nvs_get_blob(eeprom_handle, "settings", (petnet_rescued_settings_t *)&petnet_settings, &nvs_size);
-    
-    if(nvs_size != sizeof(petnet_rescued_settings_t) && rs == ESP_OK) {
-        ESP_LOGI(TAG, "The size of petnet_rescued_settings_t has changed. Erasing Flash and Reinitialize.");
-        nvs_close(eeprom_handle);
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
-        ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
-        rs = ESP_ERR_NVS_NOT_FOUND;
+    ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
+    petnet_rescued_settings_t tmp;
+    esp_err_t rs = nvs_get_blob(eeprom_handle, "settings", (petnet_rescued_settings_t *)&tmp, &nvs_size);
+    nvs_close(eeprom_handle);
+
+    if (rs == ESP_OK) {
+        ESP_LOGI(TAG, "nvs_get_blob size: %d", nvs_size);
+        ESP_LOGI(TAG, "size of current petnet_settings: %d", sizeof(petnet_rescued_settings_t));
+        ESP_LOGI(TAG, "size of float: %d", sizeof(float));
+        
+        rs = check_upgrade_settings(&petnet_settings, &tmp, nvs_size);
+
+        // print_settings(&petnet_settings);
+        // while (true) {
+        //     vTaskDelay(1000 / portTICK_PERIOD_MS);
+        // }
+
+        if(rs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            ESP_LOGI(TAG, "nvs_set_blob");
+            save_settings_to_nvs();
+            print_settings(&petnet_settings);
+        } else {
+            ESP_LOGI(TAG, "Settings are up to date.");
+            memcpy(&petnet_settings, &tmp, sizeof(petnet_rescued_settings_t));
+        }
     }
-    switch (rs)
-    {
-    case ESP_ERR_NVS_NOT_FOUND:
+    else if (rs == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "Settings are not found in NVS.");
         memset(&petnet_settings, 0, sizeof(petnet_rescued_settings_t));
         const esp_partition_t *running = esp_ota_get_running_partition();
         esp_app_desc_t running_app_info;
@@ -977,19 +938,9 @@ void app_main(void) {
         strcpy(petnet_settings.firmware_version, running_app_info.version);
         get_chip_id(petnet_settings.device_id);
         strcpy(petnet_settings.tz, "UTC");
-        strcpy(petnet_settings.api_key, API_KEY);
         secret_generator(petnet_settings.secret, sizeof(petnet_settings.secret));
-        petnet_settings.is_24h_mode = false;
-        ESP_ERROR_CHECK(nvs_set_blob(eeprom_handle, "settings", &petnet_settings, sizeof(petnet_rescued_settings_t)));
-        ESP_ERROR_CHECK(nvs_commit(eeprom_handle));
-        ESP_LOGI(TAG, "New settings was created and saved to NVS");
-        break;
-    
-    default:
-        break;
+        save_settings_to_nvs();
     }
-
-    nvs_close(eeprom_handle);
 
     // Get number of used entries and free entries in the NVS partitions
     nvs_stats_t nvs_stats;
@@ -1213,6 +1164,11 @@ void app_main(void) {
 #endif
     xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
     bool diagnostic_is_ok = initialize();
+    gpio_set_level(GREEN_LED, LED_OFF);
+    gpio_set_level(RED_LED, LED_OFF);
+#if !GEN1
+    gpio_set_level(BLUE_LED, LED_OFF);
+#endif
 
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t ota_state;

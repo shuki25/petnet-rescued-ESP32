@@ -8,7 +8,7 @@ char *fetch_json_value(cJSON *payload, char *key) {
             if (!strcasecmp(name->valuestring, key)) {
                 value = cJSON_GetObjectItem(row, "value");
                 if (value != NULL) {
-                    if (value->type == cJSON_String) {
+                    if (cJSON_IsString(value)) {
                         return value->valuestring;
                     }
                     else {

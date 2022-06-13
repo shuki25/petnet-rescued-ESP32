@@ -80,38 +80,15 @@ uint16_t process_event(cJSON *event) {
                 ESP_LOGI(TAG, "Feeding Schedule has %d feeding time slots", num_feeding_times);
             }
             free(content);
+            content = NULL;
             status_code = notify_event_completed(event_id);
             break;
             
 
         case SMART_FEEDER_EVENT_SETTINGS_CHANGE:
             ESP_LOGI(TAG, "in SMART_FEEDER_EVENT_SETTINGS_CHANGE");
-            status_code = api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/settings/");
-            if (status_code == 200) {
-                json_payload = cJSON_Parse(content);
-                if (json_payload != NULL) {
-                    rs = cJSON_GetObjectItem(json_payload, "results");
-                    value_string = fetch_json_value(rs, "is_setup_done");
-                    if (value_string) {
-                        petnet_settings.is_setup_done = atoi(value_string);
-                    }
-                    value_string = fetch_json_value(rs, "tz_esp32");
-                    if (value_string) {
-                        ESP_LOGI(TAG, "Old timezone: %s", petnet_settings.tz); 
-                        ESP_LOGI(TAG, "Setting timezone to %s", value_string);
-                        if (strcmp(value_string, petnet_settings.tz) != 0) {
-                            ESP_LOGI(TAG, "Timezone changed, updating time");
-                            strcpy(petnet_settings.tz, value_string);
-                            tz_changed = true;
-                        }
-                    }
-                } else {
-                    ESP_LOGI(TAG, "Error with JSON");
-                }
-                cJSON_Delete(json_payload);
-            }
+            get_settings_from_server();
             status_code = notify_event_completed(event_id);
-            free(content);
             break;
 
         case SMART_FEEDER_EVENT_FACTORY_RESET:
