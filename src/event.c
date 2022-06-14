@@ -35,7 +35,7 @@ uint16_t process_event(cJSON *event) {
     cJSON *rs, *json_payload;
     uint32_t event_id = (uint32_t)99999999, value_number;
     uint16_t event_code = (uint16_t)999, status_code;
-    char *value_string, *content;
+    char *content;
     float feed_amt = 0.0;
 
     rs = cJSON_GetObjectItem(event, "id");
