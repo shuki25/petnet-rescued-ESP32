@@ -63,21 +63,11 @@
 #define I2C_MASTER_RX_BUF_DISABLE   0                           /*!< I2C master doesn't need buffer */
 #define I2C_MASTER_TIMEOUT_MS       1000
 
-#define WIFI_SSID       "hiccup"
-#define WIFI_PASS       "dragonrider2014"
 #define WIFI_MAX_RETRY  5
-#define API_KEY         "63b31b00a770ac4fc22154fdc8eb4875958607fe"
-// #define API_BASE_URL    "http://192.168.2.118:8111/api"
-// #define API_BASE_URL    "https://7453-24-59-154-128.ngrok.io/api"
 #define API_BASE_URL    "https://smartpetfeeder.net/api"
 
+#define DISPENSE_TIMEOUT  15
 #define HASH_LEN 32
-
-#ifndef WIFI_SSID
-#define WIFI_SSID       CONFIG_ESP_WIFI_SSID
-#define WIFI_PASS       CONFIG_ESP_WIFI_PASSWORD
-#define WIFI_MAX_RETRY  CONFIG_ESP_MAXIMUM_RETRY
-#endif
 
 #if CONFIG_IDF_TARGET_ESP32
 #define CONFIG_MAX_CPU_FREQ_MHZ     CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ

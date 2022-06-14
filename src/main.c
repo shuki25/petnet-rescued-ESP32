@@ -65,7 +65,7 @@ bool is_clock_set = false;
 feeding_schedule_t *feeding_schedule;
 uint8_t num_feeding_times;
 bool get_next_meal_slot = true;
-bool manual_feeding = false;
+bool is_manual_feeding_requested = false;
 bool tz_changed = false;
 uint8_t red_blinky, green_blinky;
 
@@ -90,7 +90,7 @@ static void gpio_task_handler(void *arg) {
     while(true) {
         if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
             current_state = gpio_get_level(io_num);
-            ESP_LOGI(TAG, "current_state: %d", current_state);
+            // ESP_LOGI(TAG, "current_state: %d", current_state);
             if(io_num == MOTOR_SNSR && current_state != hopper_state.state) {
                 hopper_state.counter++;
                 hopper_state.state = current_state;
@@ -105,9 +105,10 @@ static void gpio_task_handler(void *arg) {
                 gpio_set_level(BLUE_LED, !current_state);
                 if(current_state == 1) {
                     button_state.counter++;
+                    is_manual_feeding_requested = true;
                     ESP_LOGI(TAG, "button count: %d\n", button_state.counter);
-                    ESP_LOGI(TAG, "red_led - active: %d", red_blinky);
-                    red_blinky = !red_blinky;
+                    // wifi_info.state = !wifi_info.state;
+                    // red_blinky = !red_blinky;
                 }
                 button_state.state = current_state;
             }
@@ -203,7 +204,7 @@ void back_to_factory_partition() {
 }
 
 static bool initialize() {
-    char *content, *value, *endpoint;
+    char *content, *endpoint;
     uint8_t length;
     uint16_t status_code = (uint16_t)500, status = (uint16_t)404;
     cJSON *payload, *results;
@@ -377,14 +378,13 @@ static void red_blinky_task(void *data) {
             led.state = !led.state;
             gpio_set_level(led.io_num, led.state);
         }
-        else if (!is_state_off && green_blinky == 0) {
+        else if (!is_state_off && red_blinky == 0) {
             is_state_off = true;
             gpio_set_level(led.io_num, LED_OFF);
         }
     }
 }
 
-#if !GEN1
 static void green_blinky_task(void *data) {
     led_config_t led = *(led_config_t *) data;
     uint8_t previous_state = green_blinky;
@@ -408,14 +408,19 @@ static void green_blinky_task(void *data) {
         }
     }
 }
-#endif
 
 static void wifi_led(void *data) {
     led_config_t led = *(led_config_t *) data;
+#if GEN1
+    uint16_t loop_delay = 1000;
+#else
     uint16_t loop_delay = led.delay;
+#endif
+    bool is_active = false;
 
     while(true) {
         if(wifi_info.state == 0) {
+            is_active = true;
             led.state = 0;
             for(int i=0; i<4; i++, led.state = !led.state) {
                 gpio_set_level(led.io_num, led.state);
@@ -425,7 +430,10 @@ static void wifi_led(void *data) {
             vTaskDelay((loop_delay) / portTICK_PERIOD_MS);
         }
         else {
-            gpio_set_level(led.io_num, LED_OFF);
+            if(is_active) {
+                gpio_set_level(led.io_num, LED_OFF);
+                is_active = false;
+            }
             vTaskDelay(loop_delay / portTICK_PERIOD_MS);
         }
 
@@ -457,6 +465,10 @@ void motor_pwm_init() {
 void dispense_food(uint8_t encoder_ticks) {
     uint32_t start_ticks = hopper_state.counter;
     uint32_t target_ticks = start_ticks + encoder_ticks;
+    time_t current_time, timeout;
+
+    current_time = time(&current_time);
+    timeout = current_time + DISPENSE_TIMEOUT;
 
     int duty = PWM_DUTY;
 
@@ -468,8 +480,7 @@ void dispense_food(uint8_t encoder_ticks) {
 
     green_blinky = true;
 
-    while (hopper_state.counter < target_ticks)
-    {
+    while (hopper_state.counter < target_ticks && current_time < timeout) {
         vTaskDelay(200 / portTICK_PERIOD_MS);
         duty += 32;
         if (duty > PWM_DUTY_MAX) {
@@ -482,6 +493,7 @@ void dispense_food(uint8_t encoder_ticks) {
                 fade = false;
             }
         }
+        current_time = time(&current_time);
     }
     ledc_set_duty(PWM_MODE, PWM_CHANNEL, 0);
     ledc_update_duty(PWM_MODE, PWM_CHANNEL);
@@ -494,7 +506,7 @@ void task_manager() {
     char incoming_msg[RX_BUFFER_SIZE];
     char buffer[RX_BUFFER_SIZE], format_dt_buffer[50];
     char heartbeat_data[TX_BUFFER_SIZE];
-    char *api_content;
+    char *api_content, *fraction;
     uart_event_t uart_event;
     uint16_t loop_counter = 1, event_code;
     bool has_feeding_slot = false, nextion_next_meal = false;
@@ -762,6 +774,58 @@ void task_manager() {
             }
         }
         
+        // Is the button pressed?
+        
+        if (is_manual_feeding_requested) {
+            time_diff = abs(next_feeding_slot -  current_time);
+            ESP_LOGI(TAG, "current_time: %ld, motor_timeout: %ld", current_time, motor_timeout);
+
+            if (current_time > motor_timeout && petnet_settings.is_manual_feeding_on) {
+
+                ESP_LOGI(TAG, "Manual feeding is triggered");
+                
+                if (is_nextion_available) {
+                    reset_data(buffer, &payload, &response);
+                    if (is_nextion_sleeping) {
+                        send_command(UART_NUM_1, "sleep=0", &response);
+                        reset_response(&response);
+                    }
+                    send_command(UART_NUM_1, "page page4", &response);
+                    reset_response(&response);
+                }
+
+                dispense_food(petnet_settings.manual_feeding_motor_ticks);
+                
+                if (is_nextion_available) {
+                    reset_data(buffer, &payload, &response);
+                    if (is_nextion_sleeping) {
+                        send_command(UART_NUM_1, "sleep=0", &response);
+                        reset_response(&response);
+                    }
+                
+                    fraction = f2frac(petnet_settings.manual_feed_amount, 16);
+                    sprintf(buffer, "%s Cup Dispensed", fraction);
+
+                    payload.string = malloc(sizeof(char) * strlen(buffer) + 1);
+                    strcpy((char *)payload.string, buffer);
+                    set_value(UART_NUM_1, "page4.t1.txt", &payload, &response);
+                    reset_response(&response);
+                    free(fraction);
+                    fraction = NULL;
+
+                    send_command(UART_NUM_1, "page page1", &response);
+                    reset_response(&response);
+                }
+
+                status_code = log_feeding("Local Manual", "M", petnet_settings.manual_feed_amount);
+                if (status_code >= 500) {
+                    ESP_LOGI(TAG, "Logging feeding failed");
+                }
+
+                motor_timeout = current_time + 120;
+            }
+            is_manual_feeding_requested = false;
+        }
 
         reset_data(incoming_msg, &payload, &response);
 
@@ -819,13 +883,29 @@ void task_manager() {
         {
         case NEXTION_TOUCH:
             ESP_LOGI(TAG, "NEXTION_TOUCH");
-            if (response.page == 1 && response.component == 12) {
-                dispense_food(16);
+            if (response.page == 1 && response.component == 12 && petnet_settings.is_manual_feeding_on) {
+                dispense_food(petnet_settings.manual_feeding_motor_ticks);
                 if (is_nextion_sleeping) {
-                        send_command(UART_NUM_1, "sleep=0", &response);
-                        reset_data(buffer, &payload, &response);
+                        send_command(UART_NUM_1, "sleep=0", &response2);
+                        reset_response(&response2);
                 }
+                
+                fraction = f2frac(petnet_settings.manual_feed_amount, 16);
+                sprintf(buffer, "%s Cup Dispensed", fraction);
+
+                payload.string = malloc(sizeof(char) * strlen(buffer) + 1);
+                strcpy((char *)payload.string, buffer);
+                set_value(UART_NUM_1, "page4.t1.txt", &payload, &response2);
+                reset_response(&response2);
+                free(fraction);
+                fraction = NULL;
+
                 send_command(UART_NUM_1, "page page1", &response2);
+                reset_response(&response2);
+                status_code = log_feeding("Local Manual", "M", petnet_settings.manual_feed_amount);
+                if (status_code >= 500) {
+                    ESP_LOGI(TAG, "Logging feeding failed");
+                }
             }
             break;           
         case NEXTION_TOUCH_COORDINATE:
@@ -1015,16 +1095,13 @@ void app_main(void) {
     led_config_t red_led, green_led;
 #if GEN1
     green_led.io_num = GREEN_LED;
-    green_led.delay = 1000;
+    green_led.delay = 350;
     green_led.state = 0;
 #else
     led_config_t blue_led;
     blue_led.io_num = BLUE_LED;
     blue_led.delay = 1000;
     blue_led.state = 0;
-    green_led.io_num = GREEN_LED;
-    green_led.delay = 350;
-    green_led.state = 0;
 #endif
     red_led.io_num = RED_LED;
     red_led.delay = 500;
@@ -1159,9 +1236,8 @@ void app_main(void) {
         ESP_LOGI(TAG, "Station IP:" IPSTR " MAC ID:" MACSTR "", IP2STR(&wifi_info.netif_info.ip), MAC2STR(wifi_info.mac));
     }
 
-#if !GEN1
+
     xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
-#endif
     xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
     bool diagnostic_is_ok = initialize();
     gpio_set_level(GREEN_LED, LED_OFF);
@@ -1196,7 +1272,7 @@ void app_main(void) {
     gpio_isr_handler_add(POWER_SNSR, gpio_isr_handler, (void *) POWER_SNSR);
 
     gpio_set_level(RED_LED, LED_OFF);
-    xTaskCreate(task_manager, "task_manager", 12288, NULL, 10, NULL);
+    xTaskCreate(task_manager, "task_manager", 13312, NULL, 10, NULL);
 
     while(true) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
