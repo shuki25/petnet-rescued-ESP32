@@ -70,12 +70,12 @@ char *secret_generator(char *str, size_t size)
 
 char *f2frac(float real_num, uint16_t limit_denominator) {
     long m[2][2];
-    double x, startx;
+    double x;
     long maxden;
     long ai;
     char *fraction;
 
-    startx = x = real_num;
+    x = real_num;
     maxden = limit_denominator;
 
     /* initialize matrix */
@@ -104,7 +104,6 @@ time_t utc_mktime(struct tm *tm)
 {
 	char timezone[50], timezone2[50];
     time_t converted_time;
-
     strlcpy(timezone, getenv("TZ"), sizeof(timezone));
     setenv("TZ", "UTC+0", 1);
     tzset();
