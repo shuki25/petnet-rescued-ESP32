@@ -193,7 +193,6 @@ void feeding_schedule_free(feeding_schedule_t **dp_schedule, uint8_t nbr_feeding
 void get_next_feeding_time(time_t *next_time, uint8_t *feed_index, feeding_schedule_t *schedule, uint8_t nbr_feeding_times) {
     time_t current_time, feeding_time;
     current_time = time(&current_time);
-    uint8_t hour, min, sec;
     time_t smallest_diff = (time_t)99999999, time_diff;
     char buffer[50];
 
@@ -208,10 +207,7 @@ void get_next_feeding_time(time_t *next_time, uint8_t *feed_index, feeding_sched
 
     for(uint8_t i=0; i < nbr_feeding_times; i++) {
         timeinfo = gmtime(&current_time);
-        sscanf(schedule[i].feed_time_utc, "%d:%d:%d", (int *)&hour, (int *)&min, (int *)&sec);
-        timeinfo->tm_hour = hour;
-        timeinfo->tm_min = min;
-        timeinfo->tm_sec = sec;
+        sscanf(schedule[i].feed_time_utc, "%d:%d:%d", &timeinfo->tm_hour, &timeinfo->tm_min, &timeinfo->tm_sec);
         feeding_time = utc_mktime(timeinfo);
         if (feeding_time < current_time) {
             ESP_LOGI(TAG, "Add one day");
