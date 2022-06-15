@@ -46,6 +46,7 @@
 #define PWM_CHANNEL     LEDC_CHANNEL_0
 #define PWM_DUTY_RES    LEDC_TIMER_10_BIT
 #define PWM_DUTY        (512)  // duty set at 50%
+#define PWM_DUTY_MIN    (256)  // duty set at 25%
 #define PWM_DUTY_MAX    (1023)
 #define PWM_FREQUENCY   (5000)
 
