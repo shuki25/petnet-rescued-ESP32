@@ -147,6 +147,7 @@ void ntp_callback(struct timeval *tv) {
         sync_nextion_clock(UART_NUM_1, timeinfo);
     }
     tz_changed = false;
+    is_clock_set = true;
 }
 
 void factory_settings_reset() {
@@ -338,6 +339,16 @@ static bool initialize() {
 
     get_settings_from_server();
 
+    if (is_nextion_available) {
+        nextion_payload.number = petnet_settings.is_manual_feeding_on;
+        set_value(UART_NUM_1, "page0.flag_manual.val", &nextion_payload, &nextion_response);
+        reset_data(buffer, &nextion_payload, &nextion_response);
+
+        if (get_value(UART_NUM_1, "page0.flag_24h.val", &nextion_response) == NEXTION_OK) {
+            petnet_settings.is_24h_mode = nextion_response.number;
+        }
+    }
+
     status_code = api_get(&content, petnet_settings.api_key, petnet_settings.device_key, "/feeding-schedule/");
 
     if (status_code == 200) {
@@ -471,21 +482,26 @@ void dispense_food(uint8_t encoder_ticks) {
     timeout = current_time + DISPENSE_TIMEOUT;
 
     int duty = PWM_DUTY;
-
-    if(!wifi_info.state) {
-        duty = PWM_DUTY_MAX;
-    }
-
     bool fade = true;
 
     green_blinky = true;
 
     while (hopper_state.counter < target_ticks && current_time < timeout) {
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-        duty += 32;
-        if (duty > PWM_DUTY_MAX) {
-            duty = PWM_DUTY_MAX;
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        if (hopper_state.counter >= target_ticks - 2) {
+            duty -= 64;
+            fade = true;
+            if (duty < PWM_DUTY_MIN) {
+                duty = PWM_DUTY_MIN;
+            }
         }
+        else {
+            duty += 16;
+            if (duty > PWM_DUTY_MAX) {
+                duty = PWM_DUTY_MAX;
+            }
+        }
+        ESP_LOGI(TAG, "dispense_food: duty: %d", duty);
         if (duty <= PWM_DUTY_MAX && fade) {
             ledc_set_duty(PWM_MODE, PWM_CHANNEL, duty);
             ledc_update_duty(PWM_MODE, PWM_CHANNEL);
@@ -584,7 +600,7 @@ void task_manager() {
             tz_changed = false;
         }
 
-        if (loop_counter % 10 == 0 && get_next_meal_slot) {
+        if (is_clock_set && get_next_meal_slot) {
             get_next_feeding_time(&next_feeding_slot, &next_feeding_index, feeding_schedule, num_feeding_times);
             ESP_LOGI(TAG, "Next feed time: %ld, index=%d", next_feeding_slot, next_feeding_index);
             if (next_feeding_slot) {
@@ -622,18 +638,6 @@ void task_manager() {
                     nextion_next_meal = true;
             }
 
-        }
-
-        if (loop_counter == 10 && is_nextion_available) {
-            if (get_value(UART_NUM_1, "page1.next_meal_name.txt", &response) == NEXTION_FAIL) {
-                ESP_LOGW(TAG, "Invalid Variable: %s", "page1.next_meal_name.txt");
-            } else {
-                if (response.string != NULL) {
-                    ESP_LOGI(TAG, "page1.next_meal_name.txt string: '%s' or [number]: %d", response.string, response.number);
-                } else {
-                    ESP_LOGI(TAG, "page1.next_meal_name.txt [number]: %d", response.number);
-                }
-            }
         }
 
         if (loop_counter > 10 && is_nextion_available && prev_food_state != food_detect_state.state) {
@@ -676,10 +680,16 @@ void task_manager() {
                     if (cJSON_IsTrue(results)) {
                         ESP_LOGI(TAG, "An event has been triggered by the server, processing the event now.");
                         event_payload = cJSON_GetObjectItem(json_payload, "event");
+                        event_code = 1;
                         if (cJSON_IsObject(event_payload)) {
                             ESP_LOGI(TAG, "Calling event handler");
                             event_code = process_event(event_payload);
                             ESP_LOGI(TAG, "Event Processed. Code: %d", event_code);
+                            if (event_code == SMART_FEEDER_EVENT_SETTINGS_CHANGE && is_nextion_available) {
+                                payload.number = petnet_settings.is_manual_feeding_on;
+                                set_value(UART_NUM_1, "page0.flag_manual.val", &payload, &response);
+                                reset_data(buffer, &payload, &response);
+                            }
                         }
                     }
                     if(is_nextion_showing_error_page) {
@@ -764,10 +774,11 @@ void task_manager() {
 
                 dispense_food(feeding_schedule[next_feeding_index].interrupter_count);
                 status_code = log_feeding(feeding_schedule[next_feeding_index].pet_name, "S", feeding_schedule[next_feeding_index].feed_amount);
-                vTaskDelay(1500 / portTICK_PERIOD_MS);
+                vTaskDelay(500 / portTICK_PERIOD_MS);
                 
                 if (is_nextion_available) {
                     send_command(UART_NUM_1, "page page1", &response);
+                    vTaskDelay(3500 / portTICK_PERIOD_MS);
                 }
                 motor_timeout = current_time + 120;
                 get_next_meal_slot = true;
@@ -906,6 +917,22 @@ void task_manager() {
                 if (status_code >= 500) {
                     ESP_LOGI(TAG, "Logging feeding failed");
                 }
+            } else if (response.page == 2 && response.component == 1) {
+                if (is_nextion_sleeping) {
+                    send_command(UART_NUM_1, "sleep=0", &response2);
+                    reset_response(&response2);
+                }
+                if (get_value(UART_NUM_1, "page0.flag_manual.val", &response2) == NEXTION_OK) {
+                    petnet_settings.is_manual_feeding_on = response2.number;
+                    reset_response(&response2);
+                }
+                if (get_value(UART_NUM_1, "page0.flag_24h.val", &response2) == NEXTION_OK) {
+                    if (petnet_settings.is_24h_mode != response2.number) {
+                        get_next_meal_slot = true;
+                    }
+                    petnet_settings.is_24h_mode = response2.number;
+                    reset_response(&response2);
+                }
             }
             break;           
         case NEXTION_TOUCH_COORDINATE:
@@ -973,6 +1000,7 @@ void app_main(void) {
         // OTA app partition table has a smaller NVS partition size than the non-OTA
         // partition table. This size mismatch may cause NVS initialization to fail.
         // If this happens, we erase NVS partition and initialize NVS again.
+        ESP_LOGI(TAG, "Erasing NVS partition");
         ESP_ERROR_CHECK(nvs_flash_erase());
 
         /* Retry nvs_flash_init */
@@ -982,16 +1010,36 @@ void app_main(void) {
     vTaskDelay(3000 / portTICK_PERIOD_MS);
 
     ESP_ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &eeprom_handle));
-    petnet_rescued_settings_t tmp;
-    esp_err_t rs = nvs_get_blob(eeprom_handle, "settings", (petnet_rescued_settings_t *)&tmp, &nvs_size);
+    char  *tmp = NULL;
+    nvs_size = 0;
+    esp_err_t rs = nvs_get_blob(eeprom_handle, "settings", NULL, &nvs_size);
+    
+    if (rs != ESP_OK && rs != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGE(TAG, "Error (%s) reading NVS settings", esp_err_to_name(rs));
+        return;
+    }
+    ESP_LOGI(TAG, "NVS size: %d", nvs_size);
+
+    if (nvs_size == 0) {
+        ESP_LOGI(TAG, "Nothing saved yet!\n");
+    } else {
+        tmp = malloc(nvs_size);
+        rs = nvs_get_blob(eeprom_handle, "settings", tmp, &nvs_size);
+        if (rs != ESP_OK) {
+            ESP_LOGE(TAG, "Error (%s) reading settings from NVS!", esp_err_to_name(rs));
+        }
+    }
     nvs_close(eeprom_handle);
 
+    if (rs != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_get_blob failed (%s)!", esp_err_to_name(rs));
+    }
     if (rs == ESP_OK) {
         ESP_LOGI(TAG, "nvs_get_blob size: %d", nvs_size);
         ESP_LOGI(TAG, "size of current petnet_settings: %d", sizeof(petnet_rescued_settings_t));
         ESP_LOGI(TAG, "size of float: %d", sizeof(float));
         
-        rs = check_upgrade_settings(&petnet_settings, &tmp, nvs_size);
+        rs = check_upgrade_settings(&petnet_settings, tmp, nvs_size);
 
         // print_settings(&petnet_settings);
         // while (true) {
@@ -1004,12 +1052,13 @@ void app_main(void) {
             print_settings(&petnet_settings);
         } else {
             ESP_LOGI(TAG, "Settings are up to date.");
-            memcpy(&petnet_settings, &tmp, sizeof(petnet_rescued_settings_t));
+            memcpy(&petnet_settings, tmp, sizeof(petnet_rescued_settings_t));
         }
     }
     else if (rs == ESP_ERR_NVS_NOT_FOUND) {
         ESP_LOGI(TAG, "Settings are not found in NVS.");
         memset(&petnet_settings, 0, sizeof(petnet_rescued_settings_t));
+        petnet_settings.setting_version = SETTINGS_VERSION;
         const esp_partition_t *running = esp_ota_get_running_partition();
         esp_app_desc_t running_app_info;
         if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK) {
@@ -1021,6 +1070,8 @@ void app_main(void) {
         secret_generator(petnet_settings.secret, sizeof(petnet_settings.secret));
         save_settings_to_nvs();
     }
+    free(tmp);
+    tmp = NULL;
 
     // Get number of used entries and free entries in the NVS partitions
     nvs_stats_t nvs_stats;
@@ -1237,8 +1288,8 @@ void app_main(void) {
     }
 
 
-    xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, 10, NULL);
-    xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, 10, NULL);
+    xTaskCreate(green_blinky_task, "blink_task", 2048, &green_led, tskIDLE_PRIORITY, NULL);
+    xTaskCreate(red_blinky_task, "blink_task", 2048, &red_led, tskIDLE_PRIORITY, NULL);
     bool diagnostic_is_ok = initialize();
     gpio_set_level(GREEN_LED, LED_OFF);
     gpio_set_level(RED_LED, LED_OFF);
@@ -1272,7 +1323,7 @@ void app_main(void) {
     gpio_isr_handler_add(POWER_SNSR, gpio_isr_handler, (void *) POWER_SNSR);
 
     gpio_set_level(RED_LED, LED_OFF);
-    xTaskCreate(task_manager, "task_manager", 13312, NULL, 10, NULL);
+    xTaskCreate(task_manager, "task_manager", 13312, NULL, tskIDLE_PRIORITY, NULL);
 
     while(true) {
         vTaskDelay(500 / portTICK_PERIOD_MS);
