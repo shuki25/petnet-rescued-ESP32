@@ -39,6 +39,8 @@
 #include "event.h"
 #include "logging.h"
 #include "ota_update.h"
+#include "logging.h"
+#include "queue.h"
 
 
 static const char *TAG = "main.c";
@@ -213,6 +215,9 @@ static bool initialize() {
     nextion_response_t nextion_response;
     nextion_payload_t nextion_payload;
     bool is_registered = false, nextion_setup_page = false, error_page = false;
+
+    logging_queue = malloc(sizeof(queue_t));
+    queue_init(logging_queue);
 
     memset(buffer, 0, RX_BUFFER_SIZE);
     memset(&nextion_payload, 0, sizeof(nextion_payload_t));
@@ -686,9 +691,20 @@ void task_manager() {
                             event_code = process_event(event_payload);
                             ESP_LOGI(TAG, "Event Processed. Code: %d", event_code);
                             if (event_code == SMART_FEEDER_EVENT_SETTINGS_CHANGE && is_nextion_available) {
+                                if (is_nextion_sleeping) {
+                                    send_command(UART_NUM_1, "sleep=0", &response);
+                                    reset_response(&response);
+                                }
                                 payload.number = petnet_settings.is_manual_feeding_on;
                                 set_value(UART_NUM_1, "page0.flag_manual.val", &payload, &response);
                                 reset_data(buffer, &payload, &response);
+                                if (petnet_settings.is_manual_feeding_on) {
+                                    send_command(UART_NUM_1, "vis p2,1", &response);
+                                    reset_response(&response);
+                                } else {
+                                    send_command(UART_NUM_1, "vis p2,0", &response);
+                                    reset_response(&response);
+                                }
                             }
                         }
                     }
@@ -734,6 +750,12 @@ void task_manager() {
             }
             free(api_content);
             api_content = NULL;
+        }
+
+        if ((loop_counter % 10 == 0) && !queue_isempty(logging_queue)) {
+            ESP_LOGI(TAG, "Logging has been queued. Retrying to send logs.");
+            post_logging_queue();
+            print_logging_queue();
         }
 
         // If Wifi connection status changes, update the wifi icon
