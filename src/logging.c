@@ -19,10 +19,15 @@ queue_t *logging_queue = NULL;
 
 uint16_t log_feeding(char *pet_name, char *feed_type, float feed_amt) {
     char buffer[256];
+    char timestamp[64];
     char *api_content;
     uint16_t status_code = 0;
-
-    sprintf(buffer, "{\"pet_name\": \"%s\", \"feed_type\": \"%s\", \"feed_amt\": %.3f}", pet_name, feed_type, feed_amt);
+    time_t current_time;
+    
+    current_time = time(&current_time);
+    struct tm *utc_timeinfo = gmtime(&current_time);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", utc_timeinfo);
+    sprintf(buffer, "{\"pet_name\": \"%s\", \"feed_type\": \"%s\", \"feed_amt\": %.3f, \"feed_timestamp\": \"%s\"}", pet_name, feed_type, feed_amt, timestamp);
     ESP_LOGI(TAG, "buffer: %s", buffer);
     status_code = api_post(&api_content, petnet_settings.api_key, petnet_settings.device_key, "/feeding-log/", buffer);
 
