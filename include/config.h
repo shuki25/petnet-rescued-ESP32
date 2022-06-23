@@ -65,8 +65,11 @@
 #define I2C_MASTER_TIMEOUT_MS       1000
 
 #define WIFI_MAX_RETRY  5
+#if STAGING_BUILD
+#define API_BASE_URL    "https://staging.smartpetfeeder.net/api"
+#else
 #define API_BASE_URL    "https://smartpetfeeder.net/api"
-
+#endif
 #define DISPENSE_TIMEOUT  15
 #define HASH_LEN 32
 
@@ -76,19 +79,24 @@
 #define CONFIG_MAX_CPU_FREQ_MHZ     CONFIG_ESP32S2_DEFAULT_CPU_FREQ_MHZ
 #endif
 
-#if CONFIG_IDF_TARGET_ESP32S2
+#if LED_INVERSE
+#define LED_ON  0
+#define LED_OFF 1
+#else
 #define LED_ON  1
 #define LED_OFF 0
+#endif
+
+#if CONFIG_IDF_TARGET_ESP32S2
 #define CONTROL_BOARD_REVISION   "D-1g"
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revD-1g-current.bin"
 #elif GEN1
-#define LED_ON  1
-#define LED_OFF 0
 #define CONTROL_BOARD_REVISION   "C-1g"
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-1g-current.bin"
+#elif GEN2_ALT
+#define CONTROL_BOARD_REVISION   "Ca-2g"
+#define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revCa-2g-current.bin"
 #else
-#define LED_ON  0
-#define LED_OFF 1
 #define CONTROL_BOARD_REVISION   "C-2g"
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-2g-current.bin"
 #endif
