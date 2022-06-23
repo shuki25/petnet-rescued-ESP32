@@ -33,7 +33,7 @@ uint16_t log_feeding(char *pet_name, char *feed_type, float feed_amt) {
 
     free(api_content);
 
-    if (status_code >= 200) {
+    if (status_code >= 500) {
         add_to_queue(buffer, false);
         print_logging_queue();
     }

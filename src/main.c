@@ -752,7 +752,7 @@ void task_manager() {
             api_content = NULL;
         }
 
-        if ((loop_counter % 10 == 0) && !queue_isempty(logging_queue)) {
+        if ((loop_counter % 30 == 0) && !queue_isempty(logging_queue)) {
             ESP_LOGI(TAG, "Logging has been queued. Retrying to send logs.");
             post_logging_queue();
             print_logging_queue();
