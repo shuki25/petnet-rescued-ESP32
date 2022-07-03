@@ -48,6 +48,8 @@ static const char *TAG = "main.c";
 static xQueueHandle gpio_evt_queue = NULL;
 QueueHandle_t uart_queue;
 xSemaphoreHandle nextion_mutex = NULL;
+max1704x_t max1704x;
+i2c_dev_t i2c_dev;
 
 static input_state_t hopper_state;
 static input_state_t button_state;
@@ -70,7 +72,6 @@ bool get_next_meal_slot = true;
 bool is_manual_feeding_requested = false;
 bool tz_changed = false;
 uint8_t red_blinky, green_blinky;
-
 
 static void IRAM_ATTR gpio_isr_handler(void *arg) {
     uint32_t gpio_num = (uint32_t) arg;
@@ -668,7 +669,7 @@ void task_manager() {
         }
 
         if (loop_counter % 20 == 0) {
-            get_battery_reading(&battery_voltage, &battery_soc, &battery_crate);
+            get_battery_reading(&max1704x, &battery_voltage, &battery_soc, &battery_crate);
             sprintf(heartbeat_data, "{\"battery_soc\": %.2f, \"battery_voltage\": %.2f, \"battery_crate\":%.2f, \"on_power\": %d, \"control_board_revision\": \"%s\", \"firmware_version\": \"%s\", \"is_hopper_low\": %d }", 
                 battery_soc, battery_voltage, battery_crate ,!power_state.state, CONTROL_BOARD_REVISION, petnet_settings.firmware_version, food_detect_state.state);
             status_code = api_post(&api_content, petnet_settings.api_key, petnet_settings.device_key, "/device/heartbeat/", heartbeat_data);
@@ -990,6 +991,7 @@ void app_main(void) {
     size_t nvs_size;
     nvs_handle_t eeprom_handle;
     srand(rand() % 1000);
+    uint16_t version = 0;
     
     uint8_t sha_256[HASH_LEN] = { 0 };
     esp_partition_t partition;
@@ -1189,33 +1191,23 @@ void app_main(void) {
     gpio_set_level(RED_LED, LED_OFF);
 
     // Set up I2C
-    i2c_port_t i2c_master_port = I2C_MASTER_NUM;
 
-    i2c_config_t i2c_config = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_MASTER_SDA_IO,
-        .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ,
-    };
+    memset(&i2c_dev, 0, sizeof(i2c_dev_t));
+    memset(&max1704x, 0, sizeof(max1704x_t));
+    
+    ESP_ERROR_CHECK(i2cdev_init());
+    ESP_ERROR_CHECK(max1704x_init_desc(&i2c_dev, I2C_MASTER_NUM, I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO));
+    ESP_ERROR_CHECK(max1704x_init(&max1704x, &i2c_dev));
+    ESP_ERROR_CHECK(max1704x_quickstart(&max1704x));
+    ESP_ERROR_CHECK(max1704x_get_version(&max1704x, &version));
+    ESP_LOGI(TAG, "MAX1704x Production Version: %d\n", version);
 
-    i2c_param_config(i2c_master_port, &i2c_config);
-    ESP_ERROR_CHECK(i2c_driver_install(i2c_master_port, i2c_config.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0));
+#if ONBOARD_RTC
+    // Set up external RTC
+#endif
+
     ESP_LOGI(TAG, "I2C Initialized successfully.");
-    uint8_t *fuel_gauge_buf = (uint8_t *)malloc(2);
 
-    ret = i2c_master_read_register(i2c_master_port, MAX1704X_REGISTER_VERSION, fuel_gauge_buf, 2);
-
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "i2c version register read ok");
-        ESP_LOG_BUFFER_HEXDUMP(TAG, fuel_gauge_buf, 2, ESP_LOG_INFO);
-        reset_fuel_gauge();
-    } else if (ret == ESP_ERR_TIMEOUT) {
-        ESP_LOGI(TAG, "I2C timed out.");
-    } else {
-        ESP_LOGI(TAG, "Unknown I2C error: %x", ret);
-    }
 
     // Set up UART connection with Nextion
     uart_config_t uart_config = {
