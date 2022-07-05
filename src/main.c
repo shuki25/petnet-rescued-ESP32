@@ -42,6 +42,9 @@
 #include "logging.h"
 #include "queue.h"
 
+#if ONBOARD_RTC
+#include "rtc.h"
+#endif
 
 static const char *TAG = "main.c";
 
@@ -49,7 +52,8 @@ static xQueueHandle gpio_evt_queue = NULL;
 QueueHandle_t uart_queue;
 xSemaphoreHandle nextion_mutex = NULL;
 max1704x_t max1704x;
-i2c_dev_t i2c_dev;
+i2c_dev_t rtc_dev;
+i2c_dev_t fuel_gauge_dev;
 
 static input_state_t hopper_state;
 static input_state_t button_state;
@@ -133,12 +137,15 @@ void ntp_callback(struct timeval *tv) {
     struct tm *timeinfo;
     char buffer[50];
 
-    setenv("TZ", "PLACEHOLDERSINCEITONLYALLOCATEONCE", 1);
     setenv("TZ", petnet_settings.tz, 1);
     tzset();
-
+    
     time_t now = time(&now);
     struct tm *utc_timeinfo = gmtime(&now);
+    #if ONBOARD_RTC
+    ESP_ERROR_CHECK(set_rtc_time(&rtc_dev, utc_timeinfo));
+#endif
+
     strftime(buffer, sizeof(buffer), "%A, %B %d %Y - %H:%M:%S ", utc_timeinfo);
     ESP_LOGI(TAG, "Time in UTC: %s", buffer);
 
@@ -374,6 +381,12 @@ static bool initialize() {
     }
     free(content);
     content = NULL;
+
+    if (strlen(petnet_settings.tz)) {
+        ESP_LOGI(TAG, "Setting timezone to %s", petnet_settings.tz);
+        setenv("TZ", petnet_settings.tz, 1);
+        tzset();
+    }
 
     return true;
 }
@@ -1192,18 +1205,32 @@ void app_main(void) {
 
     // Set up I2C
 
-    memset(&i2c_dev, 0, sizeof(i2c_dev_t));
+    memset(&fuel_gauge_dev, 0, sizeof(i2c_dev_t));
     memset(&max1704x, 0, sizeof(max1704x_t));
     
     ESP_ERROR_CHECK(i2cdev_init());
-    ESP_ERROR_CHECK(max1704x_init_desc(&i2c_dev, I2C_MASTER_NUM, I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO));
-    ESP_ERROR_CHECK(max1704x_init(&max1704x, &i2c_dev));
+    ESP_ERROR_CHECK(max1704x_init_desc(&fuel_gauge_dev, I2C_MASTER_NUM, I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO));
+    ESP_ERROR_CHECK(max1704x_init(&max1704x, &fuel_gauge_dev));
     ESP_ERROR_CHECK(max1704x_quickstart(&max1704x));
     ESP_ERROR_CHECK(max1704x_get_version(&max1704x, &version));
     ESP_LOGI(TAG, "MAX1704x Production Version: %d\n", version);
 
+    // Set up clock and timezone
+    setenv("TZ", "PLACEHOLDERSINCEITONLYALLOCATEONCE", 1);
+    setenv("TZ", "UTC", 1);
+    tzset();
+
 #if ONBOARD_RTC
     // Set up external RTC
+    ESP_ERROR_CHECK(external_rtc_init(&rtc_dev));
+    esp_err_t r = sync_rtc_clock(&rtc_dev, "UTC");
+    if (r == ESP_OK) {
+        ESP_LOGI(TAG, "RTC clock synced");
+        tz_changed = false;
+        is_clock_set = true;
+    } else {
+        ESP_LOGE(TAG, "RTC clock sync failed");
+    }
 #endif
 
     ESP_LOGI(TAG, "I2C Initialized successfully.");
