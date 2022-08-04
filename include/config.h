@@ -91,12 +91,18 @@
 #if CONFIG_IDF_TARGET_ESP32S2
 #define CONTROL_BOARD_REVISION   "D-1g"
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revD-1g-current.bin"
+#elif ONBOARD_RTC && GEN1
+#define CONTROL_BOARD_REVISION   "E-1g"
+#define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revE-1g-current.bin"
 #elif GEN1
 #define CONTROL_BOARD_REVISION   "C-1g"
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-1g-current.bin"
 #elif GEN2_ALT
 #define CONTROL_BOARD_REVISION   "Ca-2g"
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revCa-2g-current.bin"
+#elif ONBOARD_RTC
+#define CONTROL_BOARD_REVISION   "E-2g"
+#define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revE-2g-current.bin"
 #else
 #define CONTROL_BOARD_REVISION   "C-2g"
 #define OTA_UPDATE_URL  "https://smartpetfeeder.net/static/firmware/firmware-revC-2g-current.bin"
