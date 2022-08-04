@@ -520,7 +520,7 @@ void dispense_food(uint8_t encoder_ticks) {
                 duty = PWM_DUTY_MAX;
             }
         }
-        ESP_LOGI(TAG, "dispense_food: duty: %d", duty);
+        // ESP_LOGI(TAG, "dispense_food: duty: %d", duty);
         if (duty <= PWM_DUTY_MAX && fade) {
             ledc_set_duty(PWM_MODE, PWM_CHANNEL, duty);
             ledc_update_duty(PWM_MODE, PWM_CHANNEL);
