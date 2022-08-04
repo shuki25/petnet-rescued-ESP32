@@ -81,11 +81,11 @@
 #endif
 
 #if LED_INVERSE
-#define LED_ON  0
-#define LED_OFF 1
-#else
 #define LED_ON  1
 #define LED_OFF 0
+#else
+#define LED_ON  0
+#define LED_OFF 1
 #endif
 
 #if CONFIG_IDF_TARGET_ESP32S2
