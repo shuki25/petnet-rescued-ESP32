@@ -27,7 +27,8 @@
 
 /*an ota data write buffer ready to write to the flash*/
 static char ota_write_data[BUFFSIZE + 1] = { 0 };
-extern const uint8_t cert[] asm("_binary_R3_cer_start");
+// extern const uint8_t cert[] asm("_binary_R3_cer_start");
+extern const uint8_t cert[] asm("_binary_dropbox_cer_start");
 
 static void http_cleanup(esp_http_client_handle_t client)
 {
@@ -87,22 +88,27 @@ void ota_update_task()
         .url = OTA_UPDATE_URL,
         .cert_pem = (char *)cert,
         .keep_alive_enable = true,
-        // .skip_cert_common_name_check = true,
+        .disable_auto_redirect = false,
     };
 
+    ESP_LOGI(TAG, "Connecting to %s", config.url);
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == NULL) {
         ESP_LOGE(TAG, "Failed to initialize HTTPS connection");
         task_fatal_error();
     }
+    ESP_LOGI(TAG, "Connected to %s", config.url);
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
         esp_http_client_cleanup(client);
         task_fatal_error();
     }
-    esp_http_client_fetch_headers(client);
 
+    esp_http_client_fetch_headers(client);
+    ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d",
+             esp_http_client_get_status_code(client),
+             esp_http_client_get_content_length(client));
     update_partition = esp_ota_get_next_update_partition(NULL);
     ESP_LOGI(TAG, "Writing to partition subtype %d at offset 0x%x",
              update_partition->subtype, update_partition->address);
