@@ -13,7 +13,7 @@
 
 #define TAG "api_client"
 
-extern const uint8_t cert[] asm("_binary_R3_cer_start");
+extern const uint8_t cert[] asm("_binary_lets_encrypt_cer_start");
 
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
@@ -94,6 +94,9 @@ uint16_t api_get(char **content, char *auth_token, char *device_key, char *endpo
     char url[256];
     char authorization[256];
     char *data;
+    uint8_t is_done = 0;
+    uint8_t is_bad_cert = 0;
+    uint8_t attempt_count = 0;
 
     // ESP_LOGI(TAG, "address: 0x%x", (unsigned int)&content);
 
@@ -103,44 +106,69 @@ uint16_t api_get(char **content, char *auth_token, char *device_key, char *endpo
     }
     ESP_LOGI(TAG, "API Endpoint: %s", url);
 
-    esp_http_client_config_t client_config = {
-        .url = url,
-        .method = HTTP_METHOD_GET,
-        .event_handler = _http_event_handler,
-        .user_data = &data,
-        .disable_auto_redirect = true,
-        .cert_pem = (char *)cert
-    };
+    while(!is_done && attempt_count < 3) {
+        esp_http_client_config_t client_config = {
+            .url = url,
+            .method = HTTP_METHOD_GET,
+            .event_handler = _http_event_handler,
+            .user_data = &data,
+            .disable_auto_redirect = true,
+            .cert_pem = (char *)cert,
+        };  
+        
+        esp_http_client_config_t client_config_no_cert = {
+            .url = url,
+            .method = HTTP_METHOD_GET,
+            .event_handler = _http_event_handler,
+            .user_data = &data,
+            .disable_auto_redirect = true,
+        }; 
 
-    // ESP_LOGI(TAG, "[before] data address: 0x%x", (unsigned int)data);
+        if (is_bad_cert) {
+            ESP_LOGE(TAG, "Bad intermediate certificate, skipping validation");
+            client_config = client_config_no_cert;
+        }
 
-    esp_http_client_handle_t client = esp_http_client_init(&client_config);
-    if (strlen(auth_token) > 1) {
-        ESP_ERROR_CHECK(esp_http_client_set_header(client, "Authorization", authorization));
-    }
-    if (strlen(auth_token) > 1) {
-        ESP_ERROR_CHECK(esp_http_client_set_header(client, "X-Device-Key", device_key));
-    }
-    ESP_ERROR_CHECK(esp_http_client_set_header(client, "Content-Type", "application/json"));
+        // ESP_LOGI(TAG, "[before] data address: 0x%x", (unsigned int)data);
 
-    err = esp_http_client_perform(client);
-    status_code = esp_http_client_get_status_code(client);
-    ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
-    
-    if (err == ESP_OK) {    
-        *content = data;
-        // ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
-        // ESP_LOGD(TAG, "*content:");
-        // ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
-    } else {
-        ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
-        *content = NULL;
+        esp_http_client_handle_t client = esp_http_client_init(&client_config);
+        if (strlen(auth_token) > 1) {
+            ESP_ERROR_CHECK(esp_http_client_set_header(client, "Authorization", authorization));
+        }
+        if (strlen(auth_token) > 1) {
+            ESP_ERROR_CHECK(esp_http_client_set_header(client, "X-Device-Key", device_key));
+        }
+        ESP_ERROR_CHECK(esp_http_client_set_header(client, "Content-Type", "application/json"));
+
+        err = esp_http_client_perform(client);
+        status_code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
+        
+        if (err == ESP_OK) {    
+            *content = data;
+            is_done = 1;
+            // ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
+            // ESP_LOGD(TAG, "*content:");
+            // ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
+        } else {
+            attempt_count++;
+            ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+            ESP_LOGE(TAG, "HTTP STATUS CODE: %d", status_code);
+            ESP_LOGE(TAG, "Attempt count: %d", attempt_count);
+            *content = NULL;
+            if (err == ESP_ERR_HTTP_CONNECT && attempt_count == 1) {
+                ESP_LOGE(TAG, "Connection failed, skipping validation");
+                is_bad_cert = 1;
+            } else if (err == ESP_ERR_HTTP_CONNECT && attempt_count > 2) {
+                ESP_LOGE(TAG, "Connection failed unrelated to certificate");
+                is_done = 1;
+            }
+        }
+        // if (data != NULL) {
+        //     ESP_LOG_BUFFER_HEXDUMP(TAG, data, strlen(data), ESP_LOG_INFO);
+        // }
+        esp_http_client_cleanup(client);
     }
-    // if (data != NULL) {
-    //     ESP_LOG_BUFFER_HEXDUMP(TAG, data, strlen(data), ESP_LOG_INFO);
-    // }
-    
-    esp_http_client_cleanup(client);
 
     return status_code;
 }
@@ -153,6 +181,9 @@ uint16_t api_post(char **content, char *auth_token, char *device_key, char *endp
     char authorization[256];
     char *data;
     data = NULL;
+    uint8_t is_done = 0;
+    uint8_t is_bad_cert = 0;
+    uint8_t attempt_count = 0;
 
     // ESP_LOGI(TAG, "address: 0x%x", (unsigned int)&content);
 
@@ -162,48 +193,74 @@ uint16_t api_post(char **content, char *auth_token, char *device_key, char *endp
     }
     ESP_LOGI(TAG, "API Endpoint: %s", url);
 
-    esp_http_client_config_t client_config = {
-        .url = url,
-        .method = HTTP_METHOD_POST,
-        .event_handler = _http_event_handler,
-        .user_data = &data,
-        .disable_auto_redirect = true,
-        .cert_pem = (char *)cert
-    };
+    while(!is_done && attempt_count < 3) {
+        esp_http_client_config_t client_config = {
+            .url = url,
+            .method = HTTP_METHOD_POST,
+            .event_handler = _http_event_handler,
+            .user_data = &data,
+            .disable_auto_redirect = true,
+            .cert_pem = (char *)cert,
+        };  
+        
+        esp_http_client_config_t client_config_no_cert = {
+            .url = url,
+            .method = HTTP_METHOD_POST,
+            .event_handler = _http_event_handler,
+            .user_data = &data,
+            .disable_auto_redirect = true,
+        }; 
 
-    // ESP_LOGI(TAG, "[before] data address: 0x%x", (unsigned int)data);
+        if (is_bad_cert) {
+            ESP_LOGE(TAG, "Bad intermediate certificate, skipping validation");
+            client_config = client_config_no_cert;
+        }
 
-    esp_http_client_handle_t client = esp_http_client_init(&client_config);
-    if (strlen(auth_token) > 1) {
-        ESP_ERROR_CHECK(esp_http_client_set_header(client, "Authorization", authorization));
+        // ESP_LOGI(TAG, "[before] data address: 0x%x", (unsigned int)data);
+
+        esp_http_client_handle_t client = esp_http_client_init(&client_config);
+        if (strlen(auth_token) > 1) {
+            ESP_ERROR_CHECK(esp_http_client_set_header(client, "Authorization", authorization));
+        }
+        if (strlen(auth_token) > 1) {
+            ESP_ERROR_CHECK(esp_http_client_set_header(client, "X-Device-Key", device_key));
+        }
+        ESP_ERROR_CHECK(esp_http_client_set_header(client, "Content-Type", "application/json"));
+
+        if (strlen(post_data) > 1) {
+            ESP_ERROR_CHECK(esp_http_client_set_post_field(client, post_data, strlen(post_data)));
+        }
+
+        err = esp_http_client_perform(client);
+        status_code = esp_http_client_get_status_code(client);
+        ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
+        
+        if (err == ESP_OK) {
+            *content = data;
+            is_done = 1;
+            // ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
+            // ESP_LOGD(TAG, "*content:");
+            // ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
+        } else {
+            attempt_count++;
+            ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+            ESP_LOGE(TAG, "HTTP STATUS CODE: %d", status_code);
+            ESP_LOGE(TAG, "Attempt count: %d", attempt_count);
+            *content = NULL;
+            if (err == ESP_ERR_HTTP_CONNECT && attempt_count == 1) {
+                ESP_LOGE(TAG, "Connection failed, skipping validation");
+                is_bad_cert = 1;
+            } else if (err == ESP_ERR_HTTP_CONNECT && attempt_count > 2) {
+                ESP_LOGE(TAG, "Connection failed unrelated to certificate");
+                is_done = 1;
+            }
+        }
+        // if (data != NULL) {
+        //     ESP_LOG_BUFFER_HEXDUMP(TAG, data, strlen(data), ESP_LOG_INFO);
+        // }
+
+        esp_http_client_cleanup(client);
     }
-    if (strlen(auth_token) > 1) {
-        ESP_ERROR_CHECK(esp_http_client_set_header(client, "X-Device-Key", device_key));
-    }
-    ESP_ERROR_CHECK(esp_http_client_set_header(client, "Content-Type", "application/json"));
-
-    if (strlen(post_data) > 1) {
-        ESP_ERROR_CHECK(esp_http_client_set_post_field(client, post_data, strlen(post_data)));
-    }
-
-    err = esp_http_client_perform(client);
-    status_code = esp_http_client_get_status_code(client);
-    ESP_LOGI(TAG, "HTTP STATUS CODE: %d", status_code);
-    
-    if (err == ESP_OK) {
-        *content = data;
-        // ESP_LOGD(TAG, "[after] content address: 0x%x", (unsigned int)*content);
-        // ESP_LOGD(TAG, "*content:");
-        // ESP_LOG_BUFFER_HEXDUMP(TAG, *content, 32, ESP_LOG_DEBUG);
-    } else {
-        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
-        *content = NULL;
-    }
-    // if (data != NULL) {
-    //     ESP_LOG_BUFFER_HEXDUMP(TAG, data, strlen(data), ESP_LOG_INFO);
-    // }
-
-    esp_http_client_cleanup(client);
 
     return status_code;
 }
