@@ -12,3 +12,4 @@ BoardRevision
 BuildNumber
 include/version.h
 *.log
+.DS_Store
